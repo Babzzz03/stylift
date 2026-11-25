@@ -117,6 +117,11 @@ export interface CaptureStats {
   widgets?: number;
   /** classes the page puts on itself / its bars past a scroll position (a bar appearing, a header turning solid) */
   scrollClasses?: number;
+  /** capture-page --why: the decisions about the elements asked about */
+  debug?: string;
+  /** how many elements were watched for classes that follow the scroll position, and which (tag#id.class) */
+  scrollClassWatch?: number;
+  scrollClassWatched?: string;
   /** reveals scrubbed by the scroll over their own measured stretch */
   revealRanges?: number;
   /** stops made again for pictures a script fills only when they come near, passed too quickly the first time */
@@ -175,6 +180,27 @@ export async function capturePage(rawOpts?: CaptureOptions): Promise<CaptureResu
   };
   const t0 = performance.now();
   const warnings: string[] = [];
+  // Investigating a real site (scripts/capture-page.mjs --why "<selector>"): what the capture decided about the
+  // elements matching window.__slDebugSel, and why — written to stats.debug. Off unless that is set.
+  const DBG = (() => {
+    try {
+      const v = (window as unknown as { __slDebugSel?: unknown }).__slDebugSel;
+      return typeof v === "string" && v ? v : null;
+    } catch {
+      return null;
+    }
+  })();
+  const dbgLog: string[] = [];
+  const dbg = (el: Element, m: string) => {
+    if (!DBG || dbgLog.length >= 300) return;
+    try {
+      if (!el.matches(DBG)) return;
+      const name = el.localName + (el.id ? "#" + el.id : "") + (typeof el.className === "string" && el.className.trim() ? "." + el.className.trim().split(/\s+/).slice(0, 2).join(".") : "");
+      dbgLog.push(`${name} '${(el.textContent || "").trim().slice(0, 16)}': ${m}`);
+    } catch {
+      /* a selector the page can't take */
+    }
+  };
   // a hidden page (window behind another, minimized, display asleep) gets slowed timers and no frames
   let wasHidden = document.visibilityState === "hidden";
   const onVis = () => { if (document.visibilityState === "hidden") wasHidden = true; };
@@ -372,6 +398,10 @@ export async function capturePage(rawOpts?: CaptureOptions): Promise<CaptureResu
   // @property so it moves smoothly — and everything the site's CSS draws from it follows, exactly.
   const VAR_ATTR = "data-sl-var";
   const varHosts = new Set<HTMLElement>();
+  // elements whose own custom properties the page switched while we scrolled (wearebulletproof.com's letters:
+  // --x: -21vw → 0vw, the site's CSS gliding them in over a second): looked at again once each stop has settled —
+  // at the moment of the switch the glide hasn't begun, and nothing in the DOM changes while it runs
+  const varLooks = new Set<HTMLElement>();
   let varStopY = 0; // the last stop sampled
   const varSamples = new Map<HTMLElement, Map<string, { y: number; v: string }[]>>();
   const varPlays: { el: HTMLElement; id: string; keys: { at: number; decl: string }[]; a: number; b: number }[] = [];
@@ -846,6 +876,11 @@ ${out.join("\n")}
     } catch {
       /* no recorder on this page */
     }
+    // the page lays itself out again for its window (sizes measured, sliders fitted) — and a page that rebuilds on
+    // resize (wearebulletproof.com splits its texts into letters again) does it now, before the snapshot, not
+    // after the scroll pass where it would swap out every letter the pass watched
+    dispatchEvent(new UIEvent("resize"));
+    await sleep(300);
     const sx = scrollX, sy = scrollY;
     // Pinned bars at the top (headers / navs) often swap to a compact "scrolled"
     // version, rebuilding their content. Keep their at-the-top content.
@@ -942,6 +977,7 @@ ${out.join("\n")}
     // cards), when it comes into view — not scrubbed by the scroll position.
     let stopN = 0;
     const stopYs = new Map<number, number>(); // where each stop of the pass scrolled to
+    const firstStop = new Map<Element, number>(); // the stop at which each element first changed
     type Tween = { stop: number; first: number; last: number; n: number; key: string; pts: { t: number; v: ReturnType<typeof visualOf> }[]; wait?: boolean };
     const tweenNow = new Map<Element, Tween>();
     const tweenBest = new Map<Element, Tween>();
@@ -1000,6 +1036,7 @@ ${out.join("\n")}
       } else if (scrollPhase === "still") {
         if (easedScrub(el)) settling.set(el, performance.now());
         else {
+          if (!timerTouched.has(el)) dbg(el, "changed with the page at rest → timer-driven");
           timerTouched.add(el); // page at rest, nothing scrolling it
           if (stillRoots.size < 2000) stillRoots.add(el);
         }
@@ -1035,6 +1072,7 @@ ${out.join("\n")}
       const chrome = inChrome(el);
       let s0 = seen.get(el);
       const v = visualOf(el);
+      if (scrollPhase === "down" && !firstStop.has(el)) firstStop.set(el, stopN);
       if (scrollPhase === "down" && !chrome && !stickyWatch.has(el) && !switchWatch.has(el) && switchWatch.size < 2000 && el instanceof HTMLElement && !inSticky(el)) {
         switchWatch.add(el);
         const v0 = startVisual.get(el);
@@ -1159,6 +1197,7 @@ ${out.join("\n")}
         const vars = (v: string | null) => (v || "").split(";").filter((d) => /^\s*--/.test(d)).join(";");
         if (vars(t.getAttribute("style")) === vars(r.oldValue)) continue;
         if (varHosts.size < 200) varHosts.add(t);
+        if (varLooks.size < 1200) varLooks.add(t);
         const nowV = performance.now();
         if (nowV - (varLook.get(t) || 0) < 90) continue;
         varLook.set(t, nowV);
@@ -1446,6 +1485,15 @@ ${out.join("\n")}
         if (stripAt) stripsAfter(stripAt);
         for (const el of classKids) observe(el); // their look after the section's transition ran
         for (const el of classSelf) if (!classKids.has(el)) observe(el); // …and their own
+        for (const el of varLooks) if (!classSelf.has(el) && el.isConnected) observe(el); // …and where their variables took them
+        if (DBG && dbgLog.length < 250) {
+          try {
+            const firsts = Array.from(document.querySelectorAll(DBG)).slice(0, 2);
+            dbgLog.push(`stop at ${Math.round(scrollY)}: ` + firsts.map((e) => `[${(e.getAttribute("style") || "").replace(/position: relative; display: inline-block; /, "").slice(0, 70)}] ${getComputedStyle(e).transform} top ${Math.round(e.getBoundingClientRect().top)}`).join(" | "));
+          } catch {
+            /* selector */
+          }
+        }
         maxWindowScroll = Math.max(maxWindowScroll, scrollY);
         sampleScrollClasses(Math.round(scrollY));
         for (const h of varHosts) {
@@ -1547,7 +1595,8 @@ ${out.join("\n")}
         await sleep(150);
       }
     }
-    dispatchEvent(new UIEvent("resize"));
+    // (no "resize" here: the page was told once before the snapshot — after the pass a site that rebuilds on resize
+    // (text split into letters again, a slider re-made) would swap out exactly what the pass watched)
     // wait for images (bounded)
     const imgs = Array.from(document.images);
     stats.images = imgs.length;
@@ -1643,7 +1692,10 @@ ${out.join("\n")}
         if (inChrome(b)) continue;
         slideBlock.add(b);
         const kids = b.getElementsByTagName("*");
-        for (let i = 0; i < kids.length && i < 3000; i++) slideBlock.add(kids[i]);
+        for (let i = 0; i < kids.length && i < 3000; i++) {
+          slideBlock.add(kids[i]);
+          dbg(kids[i], "inside a slideshow block (kept as it is)");
+        }
         stats.timerSlides = (stats.timerSlides || 0) + 1;
       }
     }
@@ -1854,6 +1906,7 @@ ${out.join("\n")}
             el.setAttribute(SCROLL_ATTR, id);
             linked.push({ el, id, pts, preStyle: style });
             stats.pinnedSteps = (stats.pinnedSteps || 0) + 1;
+            dbg(el, `scroll-linked in a pinned section (${pts.length} samples)`);
             continue;
           }
         }
@@ -1874,6 +1927,7 @@ ${out.join("\n")}
             const id = `s${linked.length + 1}`;
             el.setAttribute(SCROLL_ATTR, id);
             linked.push({ el, id, pts, preStyle: style });
+            dbg(el, `scroll-linked (${pts.length} samples)`);
             continue;
           }
         }
@@ -1907,7 +1961,8 @@ ${out.join("\n")}
         // captions taking turns) — a reveal stays on, or hides only once scrolled away: replayed on the scroll
         // position, starting from how it looked at the top
         const warr = o.scrollLinked ? switchSamples.get(el) : undefined;
-        if (warr && warr.length >= 3 && el instanceof HTMLElement && linked.length < 250 && !timerTouched.has(el) && !slideBlock.has(el) && !inChrome(el) && getComputedStyle(el).position !== "fixed") {
+        // (a row's letters / words count apart: a page splits hundreds of them — wearebulletproof.com ~300)
+        if (warr && warr.length >= 3 && el instanceof HTMLElement && linked.length < (ofRow ? 800 : 250) && !timerTouched.has(el) && !slideBlock.has(el) && !inChrome(el) && getComputedStyle(el).position !== "fixed") {
           const pts = Array.from(new Map(warr.map((p) => [p.y, p])).values()).sort((a, b) => a.y - b.y);
           const tys = pts.map((p) => matrixNums(p.tf));
           const top = docTop(el), hgt = el.getBoundingClientRect().height;
@@ -1929,13 +1984,14 @@ ${out.join("\n")}
           let moves = 0;
           for (let i = 1; i < tys.length; i++) if (tys[i].length === 6 && tys[i - 1].length === 6 && (Math.abs(tys[i][4] - tys[i - 1][4]) > 4 || Math.abs(tys[i][5] - tys[i - 1][5]) > 4 || Math.abs(tys[i][0] - tys[i - 1][0]) > 0.02)) moves++;
           const glides = moves >= 3 && pts.every((p) => p.op >= 0.5) && !restingTf(pts[pts.length - 1].tf) && easedScrub(el);
-          if (tys.every((m) => m.length === 6) && (offOnScreen(pts.map((p) => p.op), 0.3) || offOnScreen(tys.map((m) => m[5]), 12) || offOnScreen(tys.map((m) => m[4]), 12) || glides) && r.width >= 20 && r.height >= 10) {
+          if (tys.every((m) => m.length === 6) && (offOnScreen(pts.map((p) => p.op), 0.3) || offOnScreen(tys.map((m) => m[5]), 12) || offOnScreen(tys.map((m) => m[4]), 12) || glides) && ((r.width >= 20 && r.height >= 10) || (ofRow && r.width >= 4 && r.height >= 4))) {
             if (cls === null) el.removeAttribute("class"); else el.setAttribute("class", cls);
             if (style === null) el.removeAttribute("style"); else el.setAttribute("style", style);
             const id = `s${linked.length + 1}`;
             el.setAttribute(SCROLL_ATTR, id);
             linked.push({ el, id, pts, preStyle: style });
             stats.switchSteps = (stats.switchSteps || 0) + 1;
+            dbg(el, `switching with the scroll on screen / gliding (${pts.length} samples)`);
             continue;
           }
         }
@@ -1953,6 +2009,7 @@ ${out.join("\n")}
           if (s0.style === null) el.removeAttribute("style"); else el.setAttribute("style", s0.style);
           decided.add(el);
           revealShown.set(el, s0.at.opacity); // it came in: it must end shown (checked once everything is decided)
+          dbg(el, `a reveal (best ${s0.best.toFixed(2)} vs before ${s0.preScore.toFixed(2)})`);
           // revealed by its section's class: keep that class in the copy
           const anc = viaAncestor.get(el);
           if (anc && s0.ancCls !== undefined && !decided.has(anc)) {
@@ -2035,14 +2092,16 @@ ${out.join("\n")}
               // timed entrance (words coming in one after another once the scroll reaches a point of the pin) is
               // replayed with its own timing, started at the scroll position where it played
               // (it was set off somewhere between the stop before and this one: half way, as the best guess)
+              // (a CSS transition records no frames: the stop where it first changed tells where)
               const tb = tweenBest.get(el);
-              const yAt = stopYs.get(tb?.stop ?? -1), yBefore = stopYs.get((tb?.stop ?? -1) - 1) ?? startY;
+              const st = tb?.stop ?? firstStop.get(el) ?? -1;
+              const yAt = stopYs.get(st), yBefore = stopYs.get(st - 1) ?? startY;
               const at = yAt === undefined ? undefined : Math.round((Math.min(yBefore, yAt) + yAt) / 2);
               const spec = at !== undefined ? timedSpec(el, s0) : null;
               if (spec) {
                 el.setAttribute("data-sl-gsap", JSON.stringify(spec));
                 el.setAttribute(IN_AT_ATTR, String(at));
-                timedList.push({ el, spec, stop: tb?.stop ?? -1 });
+                timedList.push({ el, spec, stop: st });
                 stats.timedReveals = (stats.timedReveals || 0) + 1;
                 stats.pinnedEntrances = (stats.pinnedEntrances || 0) + 1;
                 seq++;
@@ -2089,8 +2148,9 @@ ${out.join("\n")}
             continue;
           }
         }
-        if (!changed) continue;
-        if ((timerTouched.has(el) || slideBlock.has(el)) && !inChrome(el)) continue; // timer-driven: latest state is the real one
+        if (!changed) { dbg(el, `unchanged (samples ${samples.get(el)?.length || 0}, seen ${seen.has(el)}, ${inSnapshot.has(el) ? "in the snapshot" : lateBorn.has(el) ? "made during the pass" : "made after"})`); continue; }
+        if ((timerTouched.has(el) || slideBlock.has(el)) && !inChrome(el)) { dbg(el, "timer-driven / slideshow: kept as it is now"); continue; } // timer-driven: latest state is the real one
+        dbg(el, `put back as it was (samples ${samples.get(el)?.length || 0}, switch ${switchSamples.get(el)?.length || 0}, sticky ${stickySamples.get(el)?.length || 0}, best ${seen.get(el)?.best?.toFixed(2)} vs before ${seen.get(el)?.preScore?.toFixed(2)}; ${inSnapshot.has(el) ? "in the snapshot" : lateBorn.has(el) ? "made during the pass" : "made after"}, start look ${preVisual.has(el) ? "recorded" : "not recorded"} ${seen.get(el)?.pre?.transform}; switch x ${(switchSamples.get(el) || []).map((p) => Math.round(matrixNums(p.tf)[4] ?? 0)).join(",")})`);
         if (cls === null) { if (el.hasAttribute("class")) el.removeAttribute("class"); }
         else if (el.getAttribute("class") !== cls) el.setAttribute("class", cls);
         // custom properties still different back at the top aren't scroll state: a size the page measured
@@ -3200,9 +3260,13 @@ ${out.join("\n")}
         for (const b of Array.from(document.querySelectorAll("body div[id], body div[class]")).slice(0, 4000)) {
           if (bars >= 8) break;
           if (!BAR.test(`${b.id} ${typeof b.className === "string" ? b.className : ""}`) || clsTargets.includes(b)) continue;
-          // (its box may hold the bar's own hidden menu too — apple.com's is 557 px tall with it)
+          // (its box may hold the bar's own hidden menu too — apple.com's is 557 px tall with it). A bar spans the page:
+          // the global nav's menus, flyouts and items above it (globalnav-flyout, globalnav-item…: hidden, or narrow)
+          // are not bars and must not use up the places
           const r = b.getBoundingClientRect();
-          if (r.top + scrollY > 200 || r.height > innerHeight * 0.8) continue;
+          if (r.top + scrollY > 200 || r.height > innerHeight * 0.8 || r.height < 8 || r.width < innerWidth * 0.5) continue;
+          const bc = getComputedStyle(b);
+          if (bc.visibility === "hidden" || bc.display === "none") continue;
           clsTargets.push(b);
           bars++;
         }
@@ -4130,6 +4194,10 @@ ${out.join("\n")}
     stats.widgets = markWidgets() || undefined;
     stats.heldAnimations = markHeldAnimations() || undefined;
     stats.scrollClasses = markScrollClasses() || undefined;
+    // (what was watched for them — the bars and the page itself — as tag#id.class, for a look when none came out)
+    const watched = clsTargets as Element[] | null;
+    stats.scrollClassWatch = watched ? watched.length : 0;
+    if (watched) stats.scrollClassWatched = watched.slice(0, 30).map((t) => t.localName + (t.id ? "#" + t.id : "") + (typeof t.className === "string" && t.className.trim() ? "." + t.className.trim().split(/\s+/).slice(0, 2).join(".") : "")).join(" ");
     const root = document.documentElement.cloneNode(true) as HTMLElement;
     tidyWhitespace(document.documentElement, root);
     root.querySelectorAll(UI_SELECTOR).forEach((n) => n.remove());
@@ -4438,6 +4506,7 @@ ${out.join("\n")}
   if (wasHidden) warnings.push("This page was hidden while it was captured (its window was covered or minimized, or the display slept): Chrome slows hidden pages, so animations and late-loading content may be missing. Keep the capture window visible.");
   stats.bytes = html.length;
   stats.ms = Math.round(performance.now() - t0);
+  if (DBG) stats.debug = dbgLog.join("\n");
   (stats as unknown as { quality: number }).quality = errorPage ? 0 : Math.round(100 * (
     0.35 * (textLen > 100 ? 1 : textLen / 100) +
     0.25 * imgsOk +

@@ -1,6 +1,7 @@
 // Dev tool: one local page through the capture (built from source) in headless Chrome at 1440×900 — prints the
 // chosen elements' opening tags (and optionally the copy's StyleLift <style> blocks) and the stats.
 //   node scripts/capture-page.mjs <page.html | https://…> id1,id2 [--css] [--out copy.html] [--sel "css selector"] [--n 6]
+//     [--why "css selector"]  (what the capture decided about those elements, and why)
 // (a URL is opened as it is — the site itself, without the extension's page-start recorder or live 3D)
 import { build } from "esbuild";
 import { spawn } from "node:child_process";
@@ -11,7 +12,7 @@ import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 const args = process.argv.slice(2);
 const flag = (n) => { const i = args.indexOf(n); return i >= 0 ? args[i + 1] : null; };
-const [PAGE, IDS = ""] = args.filter((a, i) => !a.startsWith("--") && !["--out", "--sel", "--n"].includes(args[i - 1]));
+const [PAGE, IDS = ""] = args.filter((a, i) => !a.startsWith("--") && !["--out", "--sel", "--n", "--why"].includes(args[i - 1]));
 const REMOTE = /^https?:\/\//.test(PAGE);
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const out = mkdtempSync(join(tmpdir(), "sl-cp-"));
@@ -37,6 +38,7 @@ try {
   await send("Emulation.setDeviceMetricsOverride", { width: 1440, height: 900, deviceScaleFactor: 1, mobile: false });
   await send("Page.navigate", { url: REMOTE ? PAGE : `http://127.0.0.1:${srv.address().port}/` });
   await sleep(REMOTE ? 9000 : 1500);
+  if (flag("--why")) await send("Runtime.evaluate", { expression: `window.__slDebugSel = ${JSON.stringify(flag("--why"))}` });
   const r = await send("Runtime.evaluate", { expression: expr, returnByValue: true, awaitPromise: true, timeout: 600000 });
   const v = JSON.parse(r.result.result.value);
   for (const i of IDS.split(",").filter(Boolean)) console.log((new RegExp(`<[a-z]+[^>]* id="${i}"[^>]*>`).exec(v.html) || ["none " + i])[0].slice(0, 300));
@@ -47,6 +49,7 @@ try {
   }
   if (args.includes("--css")) for (const m of v.html.matchAll(/<style data-sl-[^>]*>[\s\S]*?<\/style>/g)) console.log(m[0].slice(0, 1200));
   if (flag("--out")) writeFileSync(flag("--out"), v.html);
+  if (v.stats?.debug) { console.log("why:\n  " + v.stats.debug.split("\n").join("\n  ")); delete v.stats.debug; }
   console.log(JSON.stringify(v.stats));
   done(0);
 } catch (e) { console.log("✗", e.message); done(1); }

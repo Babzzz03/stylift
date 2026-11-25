@@ -235,12 +235,26 @@ writeFileSync(join(outdir, "waapiletters.html"), `<!doctype html><html><head><st
 writeFileSync(join(outdir, "wheelq.html"), `<!doctype html><html><head><style>body{margin:0} .tall{height:1500px} #wq{position:relative;height:700px;perspective:900px} #wq div{position:absolute;left:50%;top:50%;width:145px;height:145px;margin:-72px;background:#8ab;border-radius:20px}</style></head><body>
 <div class="tall"></div><div id="wq">${[0, 1, 2, 3, 4, 5, 6, 7].map((i) => `<div id="wq${i}"></div>`).join("")}</div><div class="tall"></div><div class="tall"></div>
 <script>{ const cs = [...document.querySelectorAll("#wq div")]; let cur = 0; const tick = () => { const p = Math.max(0, Math.min(1, (scrollY - 900) / 1300)); const target = p * 90; cur += (target - cur) * 0.06; if (Math.abs(target - cur) < 0.01) cur = target; cs.forEach((c, i) => { const a = (cur - 60 + i * 45) * Math.PI / 180; c.style.transform = "translate3d(" + (Math.sin(a) * 260).toFixed(2) + "px, " + ((1 - Math.cos(a)) * 60).toFixed(2) + "px, 0) scale(" + (0.8 + 0.2 * Math.cos(a)).toFixed(3) + ") rotateY(" + (Math.sin(a) * -40).toFixed(2) + "deg)"; }); requestAnimationFrame(tick); }; requestAnimationFrame(tick); }</script></body></html>`);
-// a local nav (a <div> named like a bar, inside a sticky <nav>) on a page with many sticky tab navs further down
-// (apple.com's galleries): the bar is still watched and its "reveal" class replayed
+// a local nav (a <div> named like a bar, inside a sticky <nav>) under a global nav full of <div>s named like it
+// (globalnav-item, globalnav-flyout…: narrow, or hidden menus) and with many sticky tab navs further down (apple.com):
+// the bar is still watched and its "reveal" class replayed
 writeFileSync(join(outdir, "manynavs.html"), `<!doctype html><html><head><style>body{margin:0;font:16px sans-serif} section{height:700px;position:relative} section nav{position:sticky;top:60px;height:30px} #mn{position:sticky;top:0;z-index:5}</style></head><body>
+<nav id="gn" style="position:relative;height:44px"><div class="globalnav-content" style="width:980px;margin:auto">${Array.from({ length: 10 }, (_, i) => `<div class="globalnav-item" style="display:inline-block;width:60px">Item ${i}<div class="globalnav-flyout globalnav-submenu" style="position:absolute;visibility:hidden;height:0">menu</div></div>`).join("")}</div></nav>
 <nav id="mn"><div id="mnc" class="localnav-container" style="height:44px">iPhone · Overview · Buy</div></nav>
 ${Array.from({ length: 14 }, (_, i) => `<section><nav role="navigation" class="tabnav">tabs ${i}</nav></section>`).join("")}
 <script>addEventListener("scroll", () => document.getElementById("mnc").classList.toggle("reveal", scrollY > 900));</script></body></html>`);
+// letters a script slides in by switching a CSS variable once as their word comes into view (and back when it
+// leaves; the site's CSS glides them) — and splits the text into letters AGAIN on every resize (wearebulletproof.com's
+// "DON JULIO"): the letters the scroll pass watched must be the ones the copy keeps, each following the scroll
+writeFileSync(join(outdir, "resplit.html"), `<!doctype html><html><head><style>body{margin:0;font:120px sans-serif;overflow-x:hidden} .tall{height:1500px} .char{display:inline-block;transform:translateX(var(--x));transition:transform 1s cubic-bezier(.2,.7,.2,1)}</style></head><body>
+<div class="tall"></div><div id="rrow"><p id="rp" style="margin:0">DON</p></div><div class="tall"></div><div class="tall"></div>
+<script>{ const p = document.getElementById("rp"), row = document.getElementById("rrow"); let cs = [], was = null; const split = () => { const t = "DON"; p.textContent = ""; cs = [...t].map((ch, i) => { const d = document.createElement("div"); d.className = "char"; d.id = "rc" + i; d.textContent = ch; d.style.cssText = "position: relative; display: inline-block; --reveal-x: " + (i % 2 ? "21vw" : "-21vw") + ";"; d.style.setProperty("--x", was ? "0vw" : d.style.getPropertyValue("--reveal-x")); p.appendChild(d); return d; }); }; split(); addEventListener("resize", split); addEventListener("scroll", () => { const r = row.getBoundingClientRect(); const inView = r.top < innerHeight * 0.8 && r.bottom > innerHeight * 0.1; if (inView === was) return; was = inView; cs.forEach((c) => c.style.setProperty("--x", inView ? "0vw" : c.style.getPropertyValue("--reveal-x"))); }); }</script></body></html>`);
+// letters in a pinned section slid in by a CSS variable switched once the scroll reaches a point of the pin, the
+// site's CSS transition gliding them (no script frames to record): timed entrances with that transition, started
+// at that scroll position
+writeFileSync(join(outdir, "pinvar.html"), `<!doctype html><html><head><style>body{margin:0;font:100px sans-serif;overflow-x:hidden} .tall{height:1500px} #pvs{height:3000px} .pin{position:sticky;top:0;height:900px;display:flex;align-items:center;padding:0 80px} .char{display:inline-block;opacity:var(--o);transform:translateX(var(--x));transition:transform .9s cubic-bezier(.2,.7,.2,1),opacity .9s}</style></head><body>
+<div class="tall"></div><section id="pvs"><div class="pin"><p id="pvp" style="margin:0">${[..."JULIO"].map((ch, i) => `<span id="pv${i}" class="char" style="--x: ${i % 2 ? "" : "-"}20vw; --o: 0;">${ch}</span>`).join("")}</p></div></section><div class="tall"></div><div class="tall"></div>
+<script>{ const cs = [...document.querySelectorAll("#pvp .char")]; let on = null; addEventListener("scroll", () => { const now = scrollY > 2100; if (now === on) return; on = now; cs.forEach((c, i) => { c.style.setProperty("--x", now ? "0vw" : (i % 2 ? "" : "-") + "20vw"); c.style.setProperty("--o", now ? "1" : "0"); }); }); }</script></body></html>`);
 // a <picture> whose <source> offers a 1x and a 2x file (as apple.com's icons): a high-density screen picks the
 // 2x one; the copy must keep showing it at its 1x size
 {
@@ -793,6 +807,16 @@ for (const variant of ["", "#bundled"]) {
   try { rules = JSON.parse(el?.getAttribute("data-sl-scroll-classes") || "[]"); } catch {}
   const rv = rules.find((r) => r.t === "reveal");
   ok(!!rv && rv.a > 500 && rv.a < 1300, `a local nav bar on a page with many sticky tab navs further down is still watched — its "reveal" replayed (${JSON.stringify(rules)})`);
+}
+{ const rc = await capture(synthUrl.replace("page.html", "resplit.html"), {}, 500).catch((e) => ({ html: "", error: String(e) }));
+  const cs = [...new JSDOM(rc.html || "<html></html>").window.document.querySelectorAll("#rp > *")];
+  ok(cs.length === 3 && cs.every((c) => c.hasAttribute("data-sl-scroll") || c.hasAttribute("data-sl-reveal") || c.hasAttribute("data-sl-in")), `letters slid in by a CSS variable switched once, on a page that splits its text again on every resize, follow the scroll in the copy (${cs.map((c) => [...c.attributes].filter((a) => a.name.startsWith("data-sl")).map((a) => a.name).join("+") || "-").join(" ")})`);
+}
+{ const vc = await capture(synthUrl.replace("page.html", "pinvar.html"), {}, 500).catch((e) => ({ html: "", error: String(e) }));
+  const cs = [...new JSDOM(vc.html || "<html></html>").window.document.querySelectorAll("#pvp > span")];
+  const ats = cs.map((c) => Number(c.getAttribute("data-sl-in-at")));
+  const d = (c) => (/--sl-in-d: ?(\d+)ms/.exec(c.getAttribute("style") || "") || [])[1];
+  ok(cs.length === 5 && cs.every((c) => c.hasAttribute("data-sl-in")) && ats.every((a) => a >= 1800 && a <= 2700) && cs.every((c) => Math.abs(Number(d(c)) - 900) <= 50), `letters in a pinned section slid in by a CSS variable and transition once the scroll reaches a point: timed entrances with that transition, started there (at ${[...new Set(ats)].join(",")}px, ${cs.map(d).join("/")}ms)`);
 }
 { const pc = await capture(synthUrl.replace("page.html", "picture.html"), {}, 500, null, 2).catch((e) => ({ html: "", error: String(e) }));
   const d = new JSDOM(pc.html || "<html></html>").window.document;
