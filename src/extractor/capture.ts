@@ -117,6 +117,10 @@ export interface CaptureStats {
   widgets?: number;
   /** classes the page puts on itself / its bars past a scroll position (a bar appearing, a header turning solid) */
   scrollClasses?: number;
+  /** content inside a frozen slideshow shown in place (it was faded / swept aside only because we went back up) */
+  slideContentShown?: number;
+  /** the class flips that made something a slideshow on a timer (element, how many inside, its classes in turn) */
+  timerSlideWhy?: string;
   /** capture-page --why: the decisions about the elements asked about */
   debug?: string;
   /** how many elements were watched for classes that follow the scroll position, and which (tag#id.class) */
@@ -689,6 +693,9 @@ ${out.join("\n")}
   // CSS counter): element → property → highest value seen
   const varPeak = new Map<HTMLElement, Map<string, number>>();
   const decidedState = new Map<Element, { cls: string | null; style: string | null }>();
+  // slide titles' letters inside a slideshow on a timer (→ their style seen in place, or null): put in place, in the
+  // slide that shows, right before the copy (wearebulletproof.com: OREO.COM's letters had been swept 21vw apart)
+  const slideTitles = new Map<Element, string | null>();
   // identical starting states share one @keyframes (text effects reveal hundreds of
   // letters that all start the same way)
   const revealKinds = new Map<string, string>(); // from-declarations → id
@@ -978,6 +985,7 @@ ${out.join("\n")}
     let stopN = 0;
     const stopYs = new Map<number, number>(); // where each stop of the pass scrolled to
     const firstStop = new Map<Element, number>(); // the stop at which each element first changed
+    // letters / words of slide titles inside a slideshow on a timer → their look in place, when the pass saw it
     type Tween = { stop: number; first: number; last: number; n: number; key: string; pts: { t: number; v: ReturnType<typeof visualOf> }[]; wait?: boolean };
     const tweenNow = new Map<Element, Tween>();
     const tweenBest = new Map<Element, Tween>();
@@ -1654,6 +1662,8 @@ ${out.join("\n")}
       const kids = el.getElementsByTagName("*");
       for (let i = 0; i < kids.length && i < 600; i++) timerTouched.add(kids[i]);
       stats.timerSlides = (stats.timerSlides || 0) + 1;
+      // (which, and how its class went — for a look when content ends up frozen)
+      if ((stats.timerSlideWhy || "").length < 900) stats.timerSlideWhy = (stats.timerSlideWhy ? stats.timerSlideWhy + " | " : "") + `${el.localName}.${(el.getAttribute("class") || "").trim().split(/\s+/).slice(0, 2).join(".")} (${kids.length} inside): ${h.vals.slice(0, 4).map((v) => v.replace(/\s+/g, ".")).join(" → ")}`;
       stillRoots.add(el);
     }
     // A slideshow is a SET: slides taking turns (one looks different from its same-kind siblings — or two,
@@ -2017,6 +2027,7 @@ ${out.join("\n")}
             decided.add(anc);
           }
           const cs = getComputedStyle(el);
+          if (DBG) dbg(el, `  reveal replay: own animation ${cs.animationName}, inside another reveal ${!!el.closest(`[${REVEAL_ATTR}]`)}, top ${Math.round(el.getBoundingClientRect().top + scrollY)}, room ${canReplay(el)}, pinned ${revealAnchor(el) === false}, sticky ${inSticky(el)}`);
           // an element with its own CSS animation keeps it; we only add reveals elsewhere
           if (o.scrollReveals && cs.animationName === "none" && !el.hasAttribute("data-framer-appear-id") && !el.closest(`[${REVEAL_ATTR}]`) && el.getBoundingClientRect().top + scrollY > innerHeight * 0.6 && canReplay(el)) {
             const anchor = revealAnchor(el);
@@ -2148,8 +2159,50 @@ ${out.join("\n")}
             continue;
           }
         }
+        if ((timerTouched.has(el) || slideBlock.has(el)) && !inChrome(el)) {
+          // timer-driven: latest state is the real one — but content inside a slideshow that is faded out or swept far
+          // aside right now (the site put it out of view as we went back to the top: wearebulletproof.com's slide
+          // titles, letters 300 px apart) while the pass saw it in place, is shown in place. Not the slides themselves
+          // (they took turns at rest: one shows), nor a digit strip rolled a little (its number is its state).
+          // A title swept aside is shown in place even when it changes on the timer itself (each slide brings its
+          // letters in as it takes its turn) — in the slide that shows (nothing above it hidden), and not a strip
+          // moved inside a clipping window (an odometer's digits).
+          const s0 = seen.get(el);
+          if (el instanceof HTMLElement) {
+            const now = visualOf(el);
+            const off = (tf: string) => { const m = matrixNums(tf); return m.length === 6 ? Math.hypot(m[4], m[5]) : 0; };
+            const showing = (() => {
+              for (let a = el.parentElement; a && a !== document.body; a = a.parentElement) {
+                const c = getComputedStyle(a);
+                if (c.display === "none" || c.visibility === "hidden" || parseFloat(c.opacity) < 0.5) return false;
+              }
+              return true;
+            })();
+            const strip = (() => {
+              const clip = el.parentElement;
+              if (!clip) return false;
+              const c = getComputedStyle(clip);
+              if (!/(hidden|clip)/.test(c.overflow + c.overflowX + c.overflowY)) return false;
+              const r = el.getBoundingClientRect(), cr = clip.getBoundingClientRect();
+              return r.height >= cr.height * 1.8 || r.width >= cr.width * 1.8;
+            })();
+            // (swept: only a letter / word of a row — small, among four or more — never a slide moved aside by a slider
+            // that lays its slides out with transforms; and in any slide, as the slider may turn before the copy)
+            const rowItem = !!el.parentElement && el.parentElement.childElementCount >= 4 && el.getBoundingClientRect().width < innerWidth * 0.3;
+            // (the slider keeps turning — and its script rewriting its titles — until the copy is taken: which slide
+            // shows, and how its title looks, is settled right before the copy; see slideTitles)
+            if (rowItem && !strip && slideTitles.size < 3000) slideTitles.set(el, s0 && s0.style !== null && s0.at.opacity >= 0.5 && off(s0.at.transform) <= 10 ? s0.style : null);
+            if (s0 && s0.style !== null && s0.at.opacity >= 0.5 && !stillRoots.has(el) && s0.at.opacity - now.opacity >= 0.3 && showing) {
+              el.setAttribute("style", s0.style);
+              stats.slideContentShown = (stats.slideContentShown || 0) + 1;
+              dbg(el, "inside a slideshow, faded now: shown as the pass saw it");
+              continue;
+            }
+          }
+          dbg(el, "timer-driven / slideshow: kept as it is now");
+          continue;
+        }
         if (!changed) { dbg(el, `unchanged (samples ${samples.get(el)?.length || 0}, seen ${seen.has(el)}, ${inSnapshot.has(el) ? "in the snapshot" : lateBorn.has(el) ? "made during the pass" : "made after"})`); continue; }
-        if ((timerTouched.has(el) || slideBlock.has(el)) && !inChrome(el)) { dbg(el, "timer-driven / slideshow: kept as it is now"); continue; } // timer-driven: latest state is the real one
         dbg(el, `put back as it was (samples ${samples.get(el)?.length || 0}, switch ${switchSamples.get(el)?.length || 0}, sticky ${stickySamples.get(el)?.length || 0}, best ${seen.get(el)?.best?.toFixed(2)} vs before ${seen.get(el)?.preScore?.toFixed(2)}; ${inSnapshot.has(el) ? "in the snapshot" : lateBorn.has(el) ? "made during the pass" : "made after"}, start look ${preVisual.has(el) ? "recorded" : "not recorded"} ${seen.get(el)?.pre?.transform}; switch x ${(switchSamples.get(el) || []).map((p) => Math.round(matrixNums(p.tf)[4] ?? 0)).join(",")})`);
         if (cls === null) { if (el.hasAttribute("class")) el.removeAttribute("class"); }
         else if (el.getAttribute("class") !== cls) el.setAttribute("class", cls);
@@ -4162,6 +4215,21 @@ ${out.join("\n")}
       if (el.getAttribute("class") !== d.cls) { if (d.cls === null) el.removeAttribute("class"); else el.setAttribute("class", d.cls); stats.reapplied = (stats.reapplied || 0) + 1; }
       if (el.getAttribute("style") !== d.style) { if (d.style === null) el.removeAttribute("style"); else el.setAttribute("style", d.style); stats.reapplied = (stats.reapplied || 0) + 1; }
     }
+    // the slide that shows now: its title's letters in place (the slider's script swept them out as we went back up)
+    for (const [el, inPlace] of slideTitles) {
+      if (!(el instanceof HTMLElement) || !el.isConnected) continue;
+      let shows = true;
+      for (let a = el.parentElement; a && a !== document.body; a = a.parentElement) {
+        const c = getComputedStyle(a);
+        if (c.display === "none" || c.visibility === "hidden" || parseFloat(c.opacity) < 0.5) { shows = false; break; }
+      }
+      const m = matrixNums(getComputedStyle(el).transform);
+      if (!shows || m.length !== 6 || Math.hypot(m[4], m[5]) < 120 || parseFloat(getComputedStyle(el).opacity) < 0.5) continue;
+      if (inPlace !== null) el.setAttribute("style", inPlace);
+      if (Math.hypot(...((): [number, number] => { const k = matrixNums(getComputedStyle(el).transform); return k.length === 6 ? [k[4], k[5]] : [0, 0]; })()) >= 120) el.style.setProperty("transform", "none");
+      stats.slideContentShown = (stats.slideContentShown || 0) + 1;
+      dbg(el, inPlace !== null ? "slide title shown in place, as the pass saw it" : "slide title put in place (never seen there)");
+    }
     // put back, for the copy only, the players the page removed after they were on screen
     const restored: Element[] = [];
     for (const g of goneFrames) {
@@ -4201,6 +4269,7 @@ ${out.join("\n")}
     const watched = clsTargets as Element[] | null;
     stats.scrollClassWatch = watched ? watched.length : 0;
     if (watched) stats.scrollClassWatched = watched.slice(0, 30).map((t) => t.localName + (t.id ? "#" + t.id : "") + (typeof t.className === "string" && t.className.trim() ? "." + t.className.trim().split(/\s+/).slice(0, 2).join(".") : "")).join(" ");
+    if (DBG) for (const e of Array.from(document.querySelectorAll(DBG)).slice(0, 4)) dbg(e, `at the copy: [${e.getAttribute("style")}] ${[...e.attributes].filter((a) => a.name.startsWith("data-sl")).map((a) => a.name).join(" ")}`);
     const root = document.documentElement.cloneNode(true) as HTMLElement;
     tidyWhitespace(document.documentElement, root);
     root.querySelectorAll(UI_SELECTOR).forEach((n) => n.remove());

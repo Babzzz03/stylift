@@ -255,6 +255,12 @@ writeFileSync(join(outdir, "resplit.html"), `<!doctype html><html><head><style>b
 writeFileSync(join(outdir, "pinvar.html"), `<!doctype html><html><head><style>body{margin:0;font:100px sans-serif;overflow-x:hidden} .tall{height:1500px} #pvs{height:3000px} .pin{position:sticky;top:0;height:900px;display:flex;align-items:center;padding:0 80px} .char{display:inline-block;opacity:var(--o);transform:translateX(var(--x));transition:transform .9s cubic-bezier(.2,.7,.2,1),opacity .9s}</style></head><body>
 <div class="tall"></div><section id="pvs"><div class="pin"><p id="pvp" style="margin:0">${[..."JULIO"].map((ch, i) => `<span id="pv${i}" class="char" style="--x: ${i % 2 ? "" : "-"}20vw; --o: 0;">${ch}</span>`).join("")}</p></div></section><div class="tall"></div><div class="tall"></div>
 <script>{ const cs = [...document.querySelectorAll("#pvp .char")]; let on = null; addEventListener("scroll", () => { const now = scrollY > 2100; if (now === on) return; on = now; cs.forEach((c, i) => { c.style.setProperty("--x", now ? "0vw" : (i % 2 ? "" : "-") + "20vw"); c.style.setProperty("--o", now ? "1" : "0"); }); }); }</script></body></html>`);
+// a works slider on a timer whose slide titles' letters slide in only while the section is on screen (and are swept
+// back out when it leaves — as we go back to the top): frozen on one slide in the copy, that slide's title in place
+// (wearebulletproof.com: the copy showed OREO.COM's letters 21vw apart)
+writeFileSync(join(outdir, "slidetitles.html"), `<!doctype html><html><head><style>body{margin:0;font:90px sans-serif;overflow-x:hidden} .tall{height:1400px} #sl{position:relative;height:500px} .sld{position:absolute;inset:0;display:none} .sld.active{display:block} .ch{display:inline-block;transform:translateX(var(--x));transition:transform .5s}</style></head><body>
+<div class="tall"></div><div id="sl">${["OREO", "TATE", "DONJ"].map((t, k) => `<div class="sld${k === 0 ? " active" : ""}" id="sld${k}"><p style="margin:0">${[...t].map((ch, i) => `<span class="ch" id="st${k}${i}" style="--x: ${i % 2 ? "" : "-"}21vw;">${ch}</span>`).join("")}</p></div>`).join("")}</div><div class="tall"></div><div class="tall"></div>
+<script>{ const sl = document.getElementById("sl"), ss = [...document.querySelectorAll(".sld")]; let k = 0, inView = false; const put = () => ss.forEach((s, j) => s.querySelectorAll(".ch").forEach((c, i) => c.style.setProperty("--x", inView && j === k ? "0vw" : (i % 2 ? "" : "-") + "21vw"))); setInterval(() => { ss[k].classList.remove("active"); k = (k + 1) % ss.length; ss[k].classList.add("active"); put(); }, 1300); addEventListener("scroll", () => { const r = sl.getBoundingClientRect(); const v = r.top < innerHeight * 0.8 && r.bottom > 0; if (v !== inView) { inView = v; put(); } }); }</script></body></html>`);
 // a <picture> whose <source> offers a 1x and a 2x file (as apple.com's icons): a high-density screen picks the
 // 2x one; the copy must keep showing it at its 1x size
 {
@@ -819,6 +825,13 @@ for (const variant of ["", "#bundled"]) {
   const ats = cs.map((c) => Number(c.getAttribute("data-sl-in-at")));
   const d = (c) => (/--sl-in-d: ?(\d+)ms/.exec(c.getAttribute("style") || "") || [])[1];
   ok(cs.length === 5 && cs.every((c) => c.hasAttribute("data-sl-in")) && ats.every((a) => a >= 1800 && a <= 2700) && cs.every((c) => Math.abs(Number(d(c)) - 900) <= 50), `letters in a pinned section slid in by a CSS variable and transition once the scroll reaches a point: timed entrances with that transition, started there (at ${[...new Set(ats)].join(",")}px, ${cs.map(d).join("/")}ms)`);
+}
+{ const tc = await capture(synthUrl.replace("page.html", "slidetitles.html"), {}, 500).catch((e) => ({ html: "", error: String(e) }));
+  const d = new JSDOM(tc.html || "<html></html>").window.document;
+  const act = [0, 1, 2].filter((k) => d.querySelector(`#sld${k}`)?.classList.contains("active"));
+  // in place: its variable at 0, or its sweep taken off (transform: none)
+  const xs = act.length === 1 ? [...d.querySelectorAll(`#sld${act[0]} .ch`)].map((c) => { const st = c.getAttribute("style") || ""; return /transform:\s*none/.test(st) ? "none" : (/--x: ?([^;]+)/.exec(st) || [])[1] || "?"; }) : [];
+  ok(act.length === 1 && xs.length === 4 && xs.every((x) => x === "none" || /^0(vw|px)?$/.test(x)), `a slider on a timer is frozen on one slide whose title (letters slid in only while on screen) shows in place (slide ${act.join(",") || "none"}, letters ${xs.join(" ") || "-"})`);
 }
 { const pc = await capture(synthUrl.replace("page.html", "picture.html"), {}, 500, null, 2).catch((e) => ({ html: "", error: String(e) }));
   const d = new JSDOM(pc.html || "<html></html>").window.document;
