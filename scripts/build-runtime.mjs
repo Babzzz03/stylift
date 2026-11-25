@@ -12,7 +12,8 @@ new Function("module", "exports", r.outputFiles[0].text)(m, m.exports);
 const HEADER = `/*
  * StyleLift — the page's motion, replayed (generated with this export; no dependencies).
  *  • Entrances that wait until they are scrolled into view ([data-sl-in-on="enter"], Studio "Scroll into view")
- *    are held at their first frame and played as they come in; word-by-word texts are split into words.
+ *    are held at their first frame and played as they come in; word-by-word texts are split into words. In a
+ *    pinned section (on screen all along) they play once the page has scrolled to where they did ([data-sl-in-at]).
  *  • The site's own one-shot CSS animations further down ([data-sl-hold]) wait the same way.
  *  • Widgets the site's scripts ran: tabs ([data-sl-tabs]), gallery arrows ([data-sl-paddle] + [data-sl-scroller]),
  *    video buttons ([data-sl-media]) and the playing / paused / ended classes the site's CSS reads.

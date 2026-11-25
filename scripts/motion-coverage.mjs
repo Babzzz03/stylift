@@ -192,7 +192,9 @@ await withChrome(async (port) => {
       srv.close();
       console.log(`  export: ${brief(html)}`);
       // what moves on the live page but not in the export (by tag, classes and text)
-      const strip = (m) => m.replace(/^\w+ /, ""); // the kind (reveal / scroll / loop) aside: a reveal replayed on the scroll position still moves
+      // the kind (reveal / scroll / loop) aside: a reveal replayed on the scroll position still moves; and a <div> or a
+      // <span> alike — the copy writes a script's <div> words inside a <p> as <span>s (the parser would split the <p>)
+      const strip = (m) => m.replace(/^\w+ /, "").replace(/^(div|span)(?=[.|])/, "box");
       const got = new Set((html?.movers || []).map(strip));
       const missing = (live?.movers || []).filter((m) => !got.has(strip(m)));
       const kinds = {};

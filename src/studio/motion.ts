@@ -800,6 +800,9 @@ export function motionRuntime(doc: Document, win: Window, split: (doc: Document,
     return y;
   };
   var tops: number[] = [];
+  // …or, inside a pinned section (on screen all along), at the scroll position it played at on the site
+  var ats: number[] = [];
+  for (var ia = 0; ia < enter.length; ia++) ats[ia] = parseFloat(enter[ia].getAttribute("data-sl-in-at") || "");
   var measure = function () {
     for (var i = 0; i < enter.length; i++) tops[i] = topOf(enter[i]);
   };
@@ -811,7 +814,7 @@ export function motionRuntime(doc: Document, win: Window, split: (doc: Document,
     for (var i = 0; i < enter.length; i++) {
       var el = enter[i];
       var again = cs(el, "--slm-replay") === "1";
-      if (!done[i] && tops[i] < line) {
+      if (!done[i] && (ats[i] >= 0 ? y >= ats[i] - 2 : tops[i] < line)) {
         play(el);
         done[i] = true;
       } else if (done[i] && again && tops[i] > y + win.innerHeight) {

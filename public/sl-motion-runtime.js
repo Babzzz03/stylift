@@ -1,7 +1,8 @@
 /*
  * StyleLift — the page's motion, replayed (generated with this export; no dependencies).
  *  • Entrances that wait until they are scrolled into view ([data-sl-in-on="enter"], Studio "Scroll into view")
- *    are held at their first frame and played as they come in; word-by-word texts are split into words.
+ *    are held at their first frame and played as they come in; word-by-word texts are split into words. In a
+ *    pinned section (on screen all along) they play once the page has scrolled to where they did ([data-sl-in-at]).
  *  • The site's own one-shot CSS animations further down ([data-sl-hold]) wait the same way.
  *  • Widgets the site's scripts ran: tabs ([data-sl-tabs]), gallery arrows ([data-sl-paddle] + [data-sl-scroller]),
  *    video buttons ([data-sl-media]) and the playing / paused / ended classes the site's CSS reads.
@@ -476,6 +477,8 @@
     return y;
   };
   var tops = [];
+  var ats = [];
+  for (var ia = 0; ia < enter.length; ia++) ats[ia] = parseFloat(enter[ia].getAttribute("data-sl-in-at") || "");
   var measure = function() {
     for (var i2 = 0; i2 < enter.length; i2++) tops[i2] = topOf(enter[i2]);
   };
@@ -487,7 +490,7 @@
     for (var i2 = 0; i2 < enter.length; i2++) {
       var el2 = enter[i2];
       var again = cs(el2, "--slm-replay") === "1";
-      if (!done[i2] && tops[i2] < line) {
+      if (!done[i2] && (ats[i2] >= 0 ? y >= ats[i2] - 2 : tops[i2] < line)) {
         play(el2);
         done[i2] = true;
       } else if (done[i2] && again && tops[i2] > y + win.innerHeight) {

@@ -150,7 +150,7 @@ writeFileSync(join(outdir, "slides.html"), `<!doctype html><html><head><style>bo
 writeFileSync(join(outdir, "widgets.html"), `<!doctype html><html><head><style>body{margin:0;font:16px sans-serif} header{position:fixed;top:0;left:0;right:0;height:50px;background:#fff;z-index:9} .tall{height:1400px}
 .tab.current{font-weight:700} .panel{height:80px} .strip{width:600px;overflow-x:auto;white-space:nowrap} .strip li{display:inline-block;width:400px;height:80px;margin-right:20px;background:#ddd}
 .frame{width:600px;overflow:hidden} .track{display:flex;width:max-content} .track div{width:600px;height:60px;flex:none;background:#ccc} .ui.playing .start{opacity:0}</style></head><body>
-<header id="hd"><a href="/">Logo</a><span id="hdtag" style="opacity: 0; transform: translate(-5px, 0px); filter: blur(0px);">The house of coffee</span></header><div id="lnav" class="localnav-container theme-reveal-on-scroll" style="position:relative"><div class="localnav-wrap">iPhone 18 Pro · Buy</div></div><div style="height:60px"></div>
+<header id="hd"><a href="/">Logo</a><span id="hdtag" style="opacity: 0; transform: translate(-5px, 0px); filter: blur(0px);">The house of coffee</span></header><div id="lnav" class="localnav-container theme-reveal-on-scroll" style="position:fixed;top:0;left:0;right:0;pointer-events:none;z-index:5"><nav id="localnav" style="position:sticky;top:0"><div class="localnav-wrap">iPhone 18 Pro · Buy</div></nav><div class="content-expand-wrap" inert style="height:500px;visibility:hidden">the bar's menu, hidden</div></div><div style="height:60px"></div><nav id="lnav2" style="position:sticky;top:0;z-index:4"><div id="lnav2c" class="localnav-container localnav-over-globalnav" style="height:40px">iPhone · Overview · Buy</div></nav>
 <ul role="tablist" id="tl"><li><a href="#wp1" id="wt1" role="tab" aria-controls="wp1" aria-selected="true" class="tab current">One</a></li><li><a href="#wp2" id="wt2" role="tab" aria-controls="wp2" aria-selected="false" class="tab">Two</a></li></ul>
 <div id="wp1" role="tabpanel" class="panel">P1</div><div id="wp2" role="tabpanel" class="panel" hidden>P2</div>
 <div class="gal"><ul class="strip" id="wst"><li>a</li><li>b</li><li>c</li></ul><button id="wprev" aria-label="Previous slide">‹</button><button id="wnext" aria-label="Next slide">›</button></div>
@@ -160,7 +160,7 @@ writeFileSync(join(outdir, "widgets.html"), `<!doctype html><html><head><style>b
 <style>@keyframes swp { from { opacity: .3 } to { opacity: 1 } } @keyframes spin { to { transform: rotate(1turn) } } .swp { animation: swp .8s forwards } .spin { animation: spin 2s linear infinite }</style>
 <p id="hold-top" class="swp">a one-shot animation in the first screen</p>
 <div class="tall"></div><p id="hold-low" class="swp">a one-shot animation further down</p><p id="spin-low" class="spin" style="width:40px">endless</p><div id="meas" style="--mw: 0px; position: relative; height: 80px"><span style="position:absolute;left:calc(var(--mw) * .5)">placed in a measured width</span></div><div class="tall"></div>
-<script>addEventListener("scroll", () => { document.body.classList.toggle("show-bar", scrollY > 600); hd.classList.toggle("is-scrolled", scrollY > 100); }); let ly = 0; addEventListener("scroll", () => { hd.classList.toggle("nav-up", scrollY > ly && scrollY > 300); ly = scrollY; }); setTimeout(() => document.body.classList.add("loaded"), 1800); addEventListener("scroll", () => document.getElementById("lnav").classList.toggle("reveal", scrollY > 700)); addEventListener("scroll", () => { if (scrollY > 900) meas.style.setProperty("--mw", "640px"); });</script>
+<script>addEventListener("scroll", () => { document.body.classList.toggle("show-bar", scrollY > 600); hd.classList.toggle("is-scrolled", scrollY > 100); }); let ly = 0; addEventListener("scroll", () => { hd.classList.toggle("nav-up", scrollY > ly && scrollY > 300); ly = scrollY; }); setTimeout(() => document.body.classList.add("loaded"), 1800); addEventListener("scroll", () => document.getElementById("lnav").classList.toggle("reveal", scrollY > 700)); addEventListener("scroll", () => { const c = document.getElementById("lnav2c"); c.classList.toggle("localnav-over-globalnav", scrollY <= 200); c.classList.toggle("sticky", scrollY > 200); c.classList.toggle("reveal", scrollY > 800); }); addEventListener("scroll", () => { if (scrollY > 900) meas.style.setProperty("--mw", "640px"); });</script>
 </body></html>`);
 // a reveal an eased scroll animation drives over a long stretch (as apple.com's: each frame moves part of the way
 // to where the scroll says it should be, so it keeps moving a moment after each stop)
@@ -201,6 +201,29 @@ writeFileSync(join(outdir, "ownanim.html"), `<!doctype html><html><head><style>b
 writeFileSync(join(outdir, "progvar.html"), `<!doctype html><html><head><style>body{margin:0;font:16px sans-serif} .tall{height:1500px} #lbar{position:fixed;top:0;left:0;right:0;height:50px;background:#333;color:#fff;transform:translateY(calc((1 - var(--progress)) * -100%))}</style></head><body>
 <div id="lbar" style="--progress: 0;">iPhone 18 Pro · Explore · Buy</div><div class="tall"></div><div class="tall"></div><div class="tall"></div>
 <script>{ const b = document.getElementById("lbar"); addEventListener("scroll", () => { const p = Math.max(0, Math.min(1, (scrollY - 600) / 400)); b.style.setProperty("--progress", String(Math.round(p * 1000) / 1000)); }); }</script></body></html>`);
+// a slowly eased scroll animation (apple.com's laptop halves sliding together): still gliding into place a few
+// seconds after each stop — and after the capture goes back to the top. Not a timer's doing: a scrubbed reveal.
+writeFileSync(join(outdir, "slowlerp.html"), `<!doctype html><html><head><style>body{margin:0;font:16px sans-serif} .tall{height:1500px} .half{height:120px;width:600px;background:#cde}</style></head><body>
+<div class="tall"></div><div id="hw" class="half" style="transform: matrix(1, 0, 0, 1, -300, 0);">left half</div><div class="tall"></div><div class="tall"></div>
+<script>{ const el = document.getElementById("hw"); let cur = -300; const tick = () => { const top = el.offsetTop - innerHeight; const p = Math.max(0, Math.min(1, (scrollY - top - 100) / 900)); const target = -300 * (1 - p); cur += (target - cur) * 0.035; if (Math.abs(target - cur) < 0.3) cur = target; el.style.transform = "matrix(1, 0, 0, 1, " + cur.toFixed(1) + ", 0)"; requestAnimationFrame(tick); }; requestAnimationFrame(tick); }</script></body></html>`);
+// a pinned (sticky) text a script splits into words only when its section comes in, each word then lit up in turn
+// by an eased scrub as you scroll through the section (santalarch.com's statements): the words, made during the
+// scroll, are scrubbed on the page's scroll position in the copy — not left as they ended up
+writeFileSync(join(outdir, "pinwords.html"), `<!doctype html><html><head><style>body{margin:0;font:40px sans-serif} .tall{height:1500px} #pws{height:3000px} .pin{position:sticky;top:0;height:900px;display:flex;align-items:center;padding:0 80px} #pwp{margin:0}</style></head><body>
+<div class="tall"></div><section id="pws"><div class="pin"><p id="pwp">A clear visual position formed through strength precision and emotional gravity</p></div></section><div class="tall"></div><div class="tall"></div>
+<script>{ const sec = document.getElementById("pws"), p = document.getElementById("pwp"); let ws = null, cur = 0; const split = () => { const words = p.textContent.split(" "); p.textContent = ""; ws = words.map((w, i) => { const s = document.createElement("span"); s.id = "pw" + i; s.textContent = w; s.style.cssText = "position: relative; display: inline-block; margin-right: 12px;"; p.appendChild(s); return s; }); ws.forEach((s) => { s.style.opacity = "0"; s.style.transform = "translate3d(0px, 40px, 0px)"; }); }; const tick = () => { const top = sec.offsetTop; if (!ws && scrollY > top - innerHeight) split(); if (ws) { const target = Math.max(0, Math.min(1, (scrollY - top) / 1800)); cur += (target - cur) * 0.12; if (Math.abs(target - cur) < 0.001) cur = target; ws.forEach((s, i) => { const wp = Math.max(0, Math.min(1, cur * ws.length - i * 0.8)); s.style.opacity = wp.toFixed(3); s.style.transform = "translate3d(0px, " + ((1 - wp) * 40).toFixed(1) + "px, 0px)"; }); } requestAnimationFrame(tick); }; requestAnimationFrame(tick); }</script></body></html>`);
+// a pinned statement whose words come in one after another ON A TIMER once the scroll reaches a point of the pin, and
+// go again when scrolled back above it (santalarch.com's: GSAP set off at a scroll position, ~1 s with a stagger,
+// reversed on the way back): replayed as timed
+// entrances started at that scroll position — not stretched over the scroll, and not at "comes into view"
+writeFileSync(join(outdir, "pintimed.html"), `<!doctype html><html><head><style>body{margin:0;font:40px sans-serif} .tall{height:1500px} #pts{height:3000px} .pin{position:sticky;top:0;height:900px;display:flex;align-items:center;padding:0 80px} #ptp{margin:0} #ptp span{display:inline-block;margin-right:12px;opacity:0;transform:translate(0px, 20px)}</style></head><body>
+<div class="tall"></div><section id="pts"><div class="pin"><p id="ptp"><span id="pt0">A</span><span id="pt1">precise</span><span id="pt2">system</span><span id="pt3">of</span><span id="pt4">decisions</span><span id="pt5">made</span><span id="pt6">to</span><span id="pt7">last</span></p></div></section><div class="tall"></div><div class="tall"></div>
+<script>{ const ws = [...document.querySelectorAll("#ptp span")]; let started = false; addEventListener("scroll", () => { if (started && scrollY < 2000) { started = false; ws.forEach((w) => { w.style.opacity = "0"; w.style.transform = "translate(0px, 20px)"; }); } if (started || scrollY < 2100) return; started = true; const t0 = performance.now(); const f = (t) => { let more = false; ws.forEach((w, i) => { const p = Math.max(0, Math.min(1, (t - t0 - i * 80) / 600)); const e = 1 - Math.pow(1 - p, 3); w.style.opacity = e.toFixed(3); w.style.transform = "translate(0px, " + (20 * (1 - e)).toFixed(2) + "px)"; if (p < 1) more = true; }); if (more) requestAnimationFrame(f); }; requestAnimationFrame(f); }); }</script></body></html>`);
+// a wheel of picture cards turned by the scroll in depth, eased (framer.com's ImageWheel: each card goes round —
+// left, right and back again — as you scroll past): every card follows the scroll in the copy, not just some
+writeFileSync(join(outdir, "wheel.html"), `<!doctype html><html><head><style>body{margin:0} .tall{height:1500px} #wh{position:relative;height:700px;perspective:900px} #wh div{position:absolute;left:50%;top:50%;width:145px;height:145px;margin:-72px;background:#8ab;border-radius:20px}</style></head><body>
+<div class="tall"></div><div id="wh">${[0, 1, 2, 3, 4, 5, 6, 7].map((i) => `<div id="wc${i}"></div>`).join("")}</div><div class="tall"></div><div class="tall"></div>
+<script>{ const cs = [...document.querySelectorAll("#wh div")]; let cur = 0; const tick = () => { const target = scrollY * 0.12; cur += (target - cur) * 0.15; if (Math.abs(target - cur) < 0.01) cur = target; cs.forEach((c, i) => { const a = (cur + i * 45) * Math.PI / 180; c.style.transform = "translate3d(" + (Math.sin(a) * 260).toFixed(2) + "px, " + (Math.cos(a) * 40).toFixed(2) + "px, 0) scale(" + (0.8 + 0.2 * Math.cos(a)).toFixed(3) + ") rotateY(" + (Math.sin(a) * -40).toFixed(2) + "deg)"; c.style.zIndex = String(Math.round(500 + Math.cos(a) * 400)); }); requestAnimationFrame(tick); }; requestAnimationFrame(tick); }</script></body></html>`);
 // a <picture> whose <source> offers a 1x and a 2x file (as apple.com's icons): a high-density screen picks the
 // 2x one; the copy must keep showing it at its 1x size
 {
@@ -694,6 +717,44 @@ for (const variant of ["", "#bundled"]) {
   ok(top === -50 && mid < -5 && mid > -45 && down === 0, `…and in the copy the bar slides in where it did on the site (top ${top}px at the start, ${mid}px half way, ${down}px once scrolled past)`);
   c.close(); await getJSON(`/json/close/${t.id}`).catch(() => {});
 }
+{ const sc = await capture(synthUrl.replace("page.html", "slowlerp.html"), {}, 500).catch((e) => ({ html: "", error: String(e) }));
+  const hw = new JSDOM(sc.html || "<html></html>").window.document.querySelector("#hw");
+  ok(!!hw && hw.hasAttribute("data-sl-reveal") && /--sl-rr: cover \d+px cover \d+px/.test(hw.getAttribute("style") || ""), `a slowly eased scroll animation, still gliding into place when the page is at rest, is scrubbed on the scroll — not frozen as a timer's doing ("${hw?.getAttribute("style")}")`);
+}
+{ const pc = await capture(synthUrl.replace("page.html", "pinwords.html"), {}, 500).catch((e) => ({ html: "", error: String(e) }));
+  const d = new JSDOM(pc.html || "<html></html>").window.document;
+  const ws = [...d.querySelectorAll("#pwp > span")];
+  const moving = ws.filter((w) => w.hasAttribute("data-sl-scroll") || w.hasAttribute("data-sl-reveal"));
+  const css = (pc.html || "").match(/@keyframes sl-scroll-s\d+ \{[^@]*?opacity: 0[^@]*?opacity: 1/g) || [];
+  ok(ws.length === 11 && moving.length >= 9 && css.length >= 9, `words a script splits a pinned text into as it comes in, then lights up as you scroll through it, are each scrubbed on the scroll in the copy (${moving.length}/${ws.length} words moving, ${css.length} fade-in timelines, ${pc.stats?.lateBorn || 0} late-made elements)`);
+}
+{ const pc = await capture(synthUrl.replace("page.html", "pintimed.html"), {}, 500).catch((e) => ({ html: "", error: String(e) }));
+  const d = new JSDOM(pc.html || "<html></html>").window.document;
+  const ws = [...d.querySelectorAll("#ptp > span")];
+  const ats = ws.map((w) => Number(w.getAttribute("data-sl-in-at")));
+  const timed = ws.filter((w) => w.hasAttribute("data-sl-in") && !w.hasAttribute("data-sl-scroll"));
+  ok(ws.length === 8 && timed.length >= 7 && ats.every((a) => a >= 2100 && a <= 2700), `words a pinned statement brings in on a timer once the scroll reaches a point are timed entrances started at that scroll position (${timed.length}/8 timed, at ${[...new Set(ats)].join(",")}px)`);
+  // …and in the copy, with the motion runtime: still hidden just before that point, shown just after
+  const rt = readFileSync(new URL("../public/sl-motion-runtime.js", import.meta.url), "utf8");
+  writeFileSync(join(outdir, "pintimed.captured.html"), (pc.html || "").replace(/<\/body>/i, () => `<script>${rt}</script></body>`));
+  const t = await getJSON(`/json/new?about:blank`, "PUT");
+  const c = cdpConnect(t.webSocketDebuggerUrl); await c.ready;
+  await c.send("Page.enable");
+  await c.send("Emulation.setDeviceMetricsOverride", { width: 1440, height: 900, deviceScaleFactor: 1, mobile: false });
+  await c.send("Page.navigate", { url: synthUrl.replace("page.html", "pintimed.captured.html") });
+  await sleep(1500);
+  const at = Math.min(...ats.filter((a) => a > 0)) || 2400;
+  const op = async (y) => { await c.send("Runtime.evaluate", { expression: `scrollTo(0, ${y})` }); await sleep(1600); return (await c.send("Runtime.evaluate", { expression: `+getComputedStyle(document.getElementById("pt7")).opacity`, returnByValue: true })).result.value; };
+  const before = await op(at - 300), after = await op(at + 20);
+  ok(before < 0.1 && after > 0.9, `…in the copy they wait in the pin until the page reaches that point, then play (last word ${before} at ${at - 300}px, ${after} at ${at + 20}px)`);
+  c.close(); await getJSON(`/json/close/${t.id}`).catch(() => {});
+}
+{ const wc = await capture(synthUrl.replace("page.html", "wheel.html"), {}, 500).catch((e) => ({ html: "", error: String(e) }));
+  const d = new JSDOM(wc.html || "<html></html>").window.document;
+  const cards = [...d.querySelectorAll("#wh > div")];
+  const moving = cards.filter((c) => c.hasAttribute("data-sl-scroll"));
+  ok(cards.length === 8 && moving.length === 8, `a wheel of cards the scroll turns in depth (eased): every card follows the scroll in the copy (${moving.length}/8; ${cards.map((c) => [...c.attributes].filter((a) => a.name.startsWith("data-sl")).map((a) => a.name).join("+") || "-").join(" ")})`);
+}
 { const pc = await capture(synthUrl.replace("page.html", "picture.html"), {}, 500, null, 2).catch((e) => ({ html: "", error: String(e) }));
   const d = new JSDOM(pc.html || "<html></html>").window.document;
   const im = d.querySelector("#picimg");
@@ -732,6 +793,10 @@ for (const variant of ["", "#bundled"]) {
   try { lnRules = JSON.parse(a("#lnav", "data-sl-scroll-classes") || "[]"); } catch {}
   const lr = lnRules.find((r) => r.t === "reveal");
   ok(!!lr && lr.a > 400 && lr.a < 1100 && lr.b === null, `a bar that is a plain <div> named like one (localnav-container) gets its scroll classes replayed too (reveal from ${lr?.a}px)`);
+  let ln2 = [];
+  try { ln2 = JSON.parse(a("#lnav2c", "data-sl-scroll-classes") || "[]"); } catch {}
+  const l2 = ln2.find((r) => r.t === "reveal"), l2s = ln2.find((r) => r.t === "sticky");
+  ok(!!l2 && l2.a > 500 && l2.a < 1200 && !!l2s, `…and one inside a sticky <nav> (as apple.com's: the nav never changes, the box inside it does) gets its own (${JSON.stringify(ln2)})`);
   ok(!!sb && sb.a > 300 && sb.a < 900 && sb.b === null && !!sh && sh.a > 0 && sh.a < 500 && !bodyRules.some((r) => r.t === "loaded") && !hdRules.some((r) => r.t === "nav-up"), `classes set past a scroll position are replayed there (body show-bar from ${sb?.a}px, header is-scrolled from ${sh?.a}px) — not a "loaded" flag, nor a header hiding on the way down (${JSON.stringify(bodyRules)} ${JSON.stringify(hdRules)})`);
   // (the panel adds the trigger script when it sees these marks: the same test as panel.ts addMotionTrigger)
   const lit = (/if \(!\/(.+?)\/\.test\(r\.html\)/.exec(readFileSync("src/panel/panel.ts", "utf8")) || [])[1];

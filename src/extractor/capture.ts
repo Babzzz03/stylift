@@ -127,6 +127,10 @@ export interface CaptureStats {
   revealsPinned?: number;
   /** progress variables (--progress…) the page's scripts set as it scrolled, played back on the scroll timeline */
   scrollVars?: number;
+  /** timed entrances in pinned sections, started at the scroll position where they played */
+  pinnedEntrances?: number;
+  /** elements the page made during the scroll pass (split text, mounted sections), judged with the rest */
+  lateBorn?: number;
   cursorFollowers?: number;
   /** count-up numbers written into the copy at the value they reached */
   countersSet?: number;
@@ -393,6 +397,9 @@ ${out.join("\n")}
 
   // Scroll-linked effects (parallax, scrubbed transforms) → CSS scroll timelines.
   const SCROLL_ATTR = "data-sl-scroll";
+  // a timed entrance set off at a scroll position (inside a pinned section): the runtime plays it once the page
+  // has scrolled that far, instead of when it comes into view
+  const IN_AT_ATTR = "data-sl-in-at";
   const linked: { el: HTMLElement; id: string; pts: { y: number; tf: string; op: number }[]; preStyle: string | null }[] = [];
   // ── scroll-scrubbed canvases (3D / WebGL scenes that change as you scroll) ──────
   // A scene the page re-renders as you scroll (a model rolling along, a camera flying
@@ -864,6 +871,11 @@ ${out.join("\n")}
       const el = allLive[i];
       liveSnapshot.push({ el, cls: el.getAttribute("class"), style: el.getAttribute("style") });
     }
+    // Elements the page makes while we scroll (text split into words as its section comes in, a section a framework
+    // mounts on the way): not in the snapshot, so remembered as they were made — their class and style before the
+    // page first changed them — and judged with everything else (a reveal, a scroll effect, or put back)
+    const inSnapshot = new Set<Element>(Array.from(allLive));
+    const lateBorn = new Map<Element, { cls: string | null; style: string | null }>();
     const visualOf = (el: Element) => {
       const cs = getComputedStyle(el);
       const op = parseFloat(cs.opacity);
@@ -926,7 +938,8 @@ ${out.join("\n")}
     // the curve. The copy replays the reveal over that time, with that delay (the stagger of letters / words /
     // cards), when it comes into view — not scrubbed by the scroll position.
     let stopN = 0;
-    type Tween = { stop: number; first: number; last: number; n: number; key: string; pts: { t: number; v: ReturnType<typeof visualOf> }[] };
+    const stopYs = new Map<number, number>(); // where each stop of the pass scrolled to
+    type Tween = { stop: number; first: number; last: number; n: number; key: string; pts: { t: number; v: ReturnType<typeof visualOf> }[]; wait?: boolean };
     const tweenNow = new Map<Element, Tween>();
     const tweenBest = new Map<Element, Tween>();
     const stopFirst = new Map<number, number>();
@@ -962,10 +975,31 @@ ${out.join("\n")}
     const offStops = new Map<Element, { stop: number; n: number }>(); // changes while far off screen, by stop
     const offCandidates = new Set<Element>(); // …at three or more stops: a timer, perhaps
     const slideBlock = new Set<Element>(); // inside a slideshow's block: kept as it is now (still scroll-linked if it is)
+    // eased by the scroll (apple.com's scroll animations move part of the way to where the scroll says, a moment
+    // after each stop): its samples settled part-way at several stops — a slide only flips on and off. Such an
+    // element still gliding into place once the page is at rest is not a timer's doing.
+    const easedScrub = (el: Element): boolean => {
+      const arr = samples.get(el);
+      if (!arr || arr.length < 4) return false;
+      const mv = (p: { tf: string }) => { const m = matrixNums(p.tf); return m.length === 16 ? [m[12], m[13]] : m.length === 6 ? [m[4], m[5]] : [0, 0]; };
+      const first = arr[0], last = arr[arr.length - 1];
+      const e = mv(last), d0 = Math.hypot(mv(first)[0] - e[0], mv(first)[1] - e[1]);
+      const prog = (p: { tf: string; op: number }) => Math.abs(last.op - first.op) > 0.05 ? (p.op - first.op) / (last.op - first.op) : d0 > 2 ? 1 - Math.hypot(mv(p)[0] - e[0], mv(p)[1] - e[1]) / d0 : NaN;
+      return arr.filter((p) => { const q = prog(p); return q > 0.08 && q < 0.92; }).length >= 2;
+    };
+    // (an eased one that is STILL changing well after the page came to rest is a timer after all: a ticker)
+    const settling = new Map<Element, number>();
+    let extending = false; // the longer watch at rest (slides only)
+    const extendedRoots = new Set<Element>();
     const observe = (el: Element) => {
-      if (scrollPhase === "still") {
-        timerTouched.add(el); // page at rest, nothing scrolling it
-        if (stillRoots.size < 2000) stillRoots.add(el);
+      if (scrollPhase === "still" && extending) {
+        if (extendedRoots.size < 2000) extendedRoots.add(el);
+      } else if (scrollPhase === "still") {
+        if (easedScrub(el)) settling.set(el, performance.now());
+        else {
+          timerTouched.add(el); // page at rest, nothing scrolling it
+          if (stillRoots.size < 2000) stillRoots.add(el);
+        }
       } else if (scrollPhase === "down" && offCandidates.size < 2000 && !offCandidates.has(el)) {
         // changed while far off screen (the hero's slideshow, as we scroll the page's middle) — maybe a timer, maybe
         // the page's scroll system tidying what is out of view (apple.com rewrites its headings far away). Not taken
@@ -998,12 +1032,12 @@ ${out.join("\n")}
       const chrome = inChrome(el);
       let s0 = seen.get(el);
       const v = visualOf(el);
-      if (scrollPhase === "down" && !chrome && !stickyWatch.has(el) && !switchWatch.has(el) && switchWatch.size < 600 && el instanceof HTMLElement && !inSticky(el)) {
+      if (scrollPhase === "down" && !chrome && !stickyWatch.has(el) && !switchWatch.has(el) && switchWatch.size < 1500 && el instanceof HTMLElement && !inSticky(el)) {
         switchWatch.add(el);
         const v0 = startVisual.get(el);
         if (v0) switchSamples.set(el, [{ y: startY, tf: v0.transform, op: v0.opacity }, ...(Math.round(scrollY) - stepPx > startY ? [{ y: Math.round(scrollY) - stepPx, tf: v0.transform, op: v0.opacity }] : [])]);
       }
-      if (scrollPhase === "down" && !chrome && !stickyWatch.has(el) && stickyWatch.size < 400 && el instanceof HTMLElement && inSticky(el)) {
+      if (scrollPhase === "down" && !chrome && !stickyWatch.has(el) && stickyWatch.size < 1000 && el instanceof HTMLElement && inSticky(el)) {
         stickyWatch.add(el);
         // it looked like its starting self until the stop before this one
         const v0 = startVisual.get(el);
@@ -1017,11 +1051,23 @@ ${out.join("\n")}
         if (!tw || (tw.stop !== stopN && now - tw.last > 120)) {
           if (tw) keepTween(el, tw);
           if (tw && tw.n > 0) movedStops.set(el, (movedStops.get(el) || 0) + 1);
-          tw = { stop: stopN, first: now, last: now, n: 0, key: k, pts: [{ t: now, v }] };
+          // (its style rewritten with nothing changed yet — a script setting every word of a staggered line on every
+          // frame, those still waiting their turn included: its clock starts when it really starts to move)
+          const prevArr = samples.get(el), lp = prevArr && prevArr[prevArr.length - 1], sv = startVisual.get(el);
+          const before = lp ? { tf: lp.tf, op: lp.op } : sv ? { tf: sv.transform, op: sv.opacity } : null;
+          const wait = !!before && before.tf === v.transform && Math.abs(before.op - v.opacity) <= 0.001;
+          tw = { stop: stopN, first: now, last: now, n: 0, key: k, pts: [{ t: now, v }], wait };
           tweenNow.set(el, tw);
           const f0 = stopFirst.get(stopN);
-          if (f0 === undefined || now < f0) stopFirst.set(stopN, now);
+          if (!wait && (f0 === undefined || now < f0)) stopFirst.set(stopN, now);
         } else if (tw.key !== k) {
+          if (tw.wait) {
+            tw.wait = false;
+            tw.first = tw.last = now - 16; // the frame before this one still showed where it started
+            tw.pts = [{ t: now - 16, v: tw.pts[0].v }];
+            const f0 = stopFirst.get(tw.stop);
+            if (f0 === undefined || now - 16 < f0) stopFirst.set(tw.stop, now - 16);
+          }
           tw.n++;
           tw.last = now;
           tw.key = k;
@@ -1115,6 +1161,23 @@ ${out.join("\n")}
         varLook.set(t, nowV);
         const kids = t.getElementsByTagName("*");
         for (let i = 0; i < kids.length && i < 300; i++) batch.add(kids[i]);
+      }
+      const bornNow = new Map<Element, Set<string>>(); // late-born elements first met in this batch: attributes read
+      for (const r of records) {
+        if (!(r.target instanceof Element) || inSnapshot.has(r.target) || !r.attributeName) continue;
+        const t = r.target;
+        let got = bornNow.get(t);
+        if (!lateBorn.has(t)) {
+          if (lateBorn.size >= 3000 || t === document.documentElement || t === document.body) continue;
+          lateBorn.set(t, { cls: t.getAttribute("class"), style: t.getAttribute("style") });
+          bornNow.set(t, (got = new Set()));
+        }
+        // its first change of each attribute in this batch tells what it was before (later ones already changed it)
+        if (got && !got.has(r.attributeName)) {
+          got.add(r.attributeName);
+          const rec = lateBorn.get(t)!;
+          if (r.attributeName === "class") rec.cls = r.oldValue; else if (r.attributeName === "style") rec.style = r.oldValue;
+        }
       }
       for (const r of records) {
         if (!(r.target instanceof Element)) continue;
@@ -1292,6 +1355,7 @@ ${out.join("\n")}
       while (y < docH() - innerHeight && performance.now() < hardStop) {
         y += step;
         stopN++;
+        stopYs.set(stopN, Math.min(y, Math.max(0, docH() - innerHeight)));
         lastScrollAt = performance.now();
         scrollTo(0, y);
         dispatchEvent(new Event("scroll"));
@@ -1437,12 +1501,34 @@ ${out.join("\n")}
     // number roll-up, ticker). Watch a little longer if something is, to catch a cycle.
     scrollPhase = "still";
     await sleep(800);
+    // something eased still gliding at rest: watched until it comes to rest (a glide slows down and stops, even a
+    // slow one within a few seconds) or the watch ends — still moving then, it goes on by itself: a ticker
+    if (settling.size) {
+      for (let t = 800; t < 4000; t += 300) {
+        const now = performance.now();
+        let moving = false;
+        for (const v of settling.values()) if (now - v < 600) { moving = true; break; }
+        if (!moving) break;
+        await sleep(300);
+      }
+      const endT = performance.now();
+      for (const [el, t] of settling)
+        if (endT - t < 600) {
+          timerTouched.add(el);
+          if (stillRoots.size < 2000) stillRoots.add(el);
+        }
+    }
     if (timerTouched.size) await sleep(2600);
-    else if (offCandidates.size) {
+    if (!timerTouched.size && offCandidates.size) {
       // something kept changing far off screen as we scrolled: watch the page at rest a while longer — a slideshow's
-      // timer shows itself here (a slide every few seconds); a scroll system's tidying doesn't
-      for (let t = 0; t < 6000 && !timerTouched.size; t += 300) await sleep(300);
-      if (timerTouched.size) await sleep(1500);
+      // timer shows itself here (a slide every few seconds). What changes in this longer watch only goes to the
+      // slide-set search below — not taken for a timer's doing (smooth scroll effects still settling there would
+      // lose their scroll-linking: framer.com)
+      extending = true;
+      for (let t = 0; t < 6000 && !extendedRoots.size; t += 300) await sleep(300);
+      if (extendedRoots.size) await sleep(1500);
+      extending = false;
+      for (const el of extendedRoots) if (stillRoots.size < 2000) stillRoots.add(el);
     }
     for (const [el, h] of clsHist) {
       // came back to an earlier class (A → B → A), at a moment nothing was scrolling it
@@ -1498,6 +1584,8 @@ ${out.join("\n")}
     revealObserver.disconnect();
     playerObserver.disconnect();
     countObserver.disconnect();
+    for (const [el, rec] of lateBorn) if (el.isConnected) liveSnapshot.push({ el, ...rec });
+    if (lateBorn.size) stats.lateBorn = lateBorn.size;
     // Resolve every element the scroll touched:
     //  • revealed (its best state is clearly more visible than before) → keep the
     //    best state and remember where it started, for a CSS scroll animation;
@@ -1591,6 +1679,23 @@ ${out.join("\n")}
       if (d < 60) return null; // an instant switch: nothing to time
       return { f, d: Math.round(Math.min(4000, d)), dl: Math.round(Math.max(0, Math.min(5000, dl))), e: CSS_EASE[e] || (/^cubic-bezier\(/.test(e) ? e : "ease"), tr: "scroll", m: "transition" };
     };
+    // a row's children in a pinned section: at how many different stops they came in (half way to their end look)
+    const rowSpreadOf = new Map<Element, number>();
+    const rowSpread = (row: Element): number => {
+      let n = rowSpreadOf.get(row);
+      if (n !== undefined) return n;
+      const at = new Set<number>();
+      for (const k of Array.from(row.children)) {
+        const sa = stickySamples.get(k);
+        if (!sa || sa.length < 3) continue;
+        const ops = sa.map((p) => p.op), lo = Math.min(...ops), hi = Math.max(...ops);
+        if (hi - lo <= 0.3) continue;
+        const first = sa.find((p) => (p.op - ops[0]) / (hi - lo) * Math.sign(ops[ops.length - 1] - ops[0] || 1) >= 0.5);
+        if (first) at.add(first.y);
+      }
+      rowSpreadOf.set(row, (n = at.size));
+      return n;
+    };
     for (const { el, cls, style } of liveSnapshot) {
       try {
         if (!el.isConnected) continue;
@@ -1606,7 +1711,9 @@ ${out.join("\n")}
         }
         // pinned scroll story step: on and off with the scroll position → scroll-linked
         const sarr = o.scrollLinked ? stickySamples.get(el) : undefined;
-        if (sarr && sarr.length >= 3 && el instanceof HTMLElement && linked.length < 250 && !timerTouched.has(el) && !inChrome(el)) {
+        // (a word or letter of a split text: one of a row of four or more)
+        const ofRow = !!el.parentElement && el.parentElement.childElementCount >= 4;
+        if (sarr && sarr.length >= 3 && el instanceof HTMLElement && linked.length < (ofRow ? 600 : 250) && !timerTouched.has(el) && !inChrome(el)) {
           const pts = Array.from(new Map(sarr.map((p) => [p.y, p])).values()).sort((a, b) => a.y - b.y);
           const ops = pts.map((p) => p.op);
           const tys = pts.map((p) => matrixNums(p.tf)).filter((m) => m.length === 6);
@@ -1619,8 +1726,22 @@ ${out.join("\n")}
             return up && down;
           };
           const ty = tys.map((m) => m[5]);
+          // …or one way only but scrubbed: caught part-way at two stops or more (words of a pinned text lighting up
+          // as you scroll through it) — a reveal on a timer is hidden or shown at a stop, part-way at one at most
+          const partWay = (vals: number[], tol: number) => {
+            const lo = Math.min(...vals), hi = Math.max(...vals);
+            if (hi - lo <= tol) return false;
+            return vals.filter((x) => (x - lo) / (hi - lo) > 0.08 && (x - lo) / (hi - lo) < 0.92).length >= 2;
+          };
+          // …or one of a row (the words of a split text) that come in at different stops down the scroll — each
+          // word's own change is short, but the row's is spread over the scroll (a timed row comes in all at one stop)
+          const scrubbed = partWay(ops, 0.3) || (tys.length === pts.length && partWay(ty, 12)) || (ofRow && rowSpread(el.parentElement!) >= 3);
+          // (but a row that came in all at one stop, each word moving on by itself for a moment after we stopped —
+          // a timed entrance set off at that point of the pinned scroll: replayed as one, started there)
+          const tb = tweenBest.get(el);
+          const timedRow = ofRow && !!tb && tb.last - tb.first < 2500 && rowSpread(el.parentElement!) <= 2 && !bothWays(ops, 0.15) && !bothWays(ty, 8);
           const r = el.getBoundingClientRect();
-          if ((opRange > 0.3 || tRange > 12) && (bothWays(ops, 0.15) || bothWays(ty, 8)) && r.width >= 20 && r.height >= 10) {
+          if (!timedRow && (opRange > 0.3 || tRange > 12) && (bothWays(ops, 0.15) || bothWays(ty, 8) || scrubbed) && ((r.width >= 20 && r.height >= 10) || (ofRow && r.width >= 4 && r.height >= 4))) {
             if (cls === null) el.removeAttribute("class"); else el.setAttribute("class", cls);
             el.setAttribute("style", style || "");
             const id = `s${linked.length + 1}`;
@@ -1743,7 +1864,11 @@ ${out.join("\n")}
               {
                 const arr = samples.get(el);
                 const bursts = (movedStops.get(el) || 0) + ((tweenNow.get(el)?.n || 0) > 0 ? 1 : 0);
-                if (arr && arr.length >= 4 && (bursts >= 2 || !tweenBest.has(el))) {
+                // (or one long glide across several stops — eased so slowly it never stopped between them: an
+                // "entrance" of seconds that settled part-way at stops follows the scroll)
+                const tb = tweenBest.get(el);
+                const longGlide = !!tb && tb.last - tb.first >= 2000 && easedScrub(el);
+                if (arr && arr.length >= 4 && (bursts >= 2 || !tb || longGlide)) {
                   const key = (p: { tf: string; op: number }) => `${p.op.toFixed(2)}|${p.tf}`;
                   const k0 = key(arr[0]), kEnd = key(arr[arr.length - 1]);
                   const i0 = arr.findIndex((p) => key(p) !== k0);
@@ -1793,6 +1918,23 @@ ${out.join("\n")}
                 el.setAttribute(TL_USE_ATTR, tl);
               }
               seq++;
+            } else if (el instanceof HTMLElement && !el.hasAttribute("data-sl-gsap") && inSticky(el)) {
+              // in a pinned (sticky) section it is on screen all along — no "comes into view" to replay it on. A
+              // timed entrance (words coming in one after another once the scroll reaches a point of the pin) is
+              // replayed with its own timing, started at the scroll position where it played
+              // (it was set off somewhere between the stop before and this one: half way, as the best guess)
+              const tb = tweenBest.get(el);
+              const yAt = stopYs.get(tb?.stop ?? -1), yBefore = stopYs.get((tb?.stop ?? -1) - 1) ?? startY;
+              const at = yAt === undefined ? undefined : Math.round((Math.min(yBefore, yAt) + yAt) / 2);
+              const spec = at !== undefined ? timedSpec(el, s0) : null;
+              if (spec) {
+                el.setAttribute("data-sl-gsap", JSON.stringify(spec));
+                el.setAttribute(IN_AT_ATTR, String(at));
+                timedList.push({ el, spec, stop: tb?.stop ?? -1 });
+                stats.timedReveals = (stats.timedReveals || 0) + 1;
+                stats.pinnedEntrances = (stats.pinnedEntrances || 0) + 1;
+                seq++;
+              }
             }
           }
           continue;
@@ -2927,19 +3069,21 @@ ${out.join("\n")}
     try {
       if (!clsTargets) {
         clsTargets = [document.documentElement, document.body];
-        const inside = (b: Element) => clsTargets!.some((t) => t !== document.documentElement && t !== document.body && (t.contains(b) || b.contains(t)));
+        // (the classes may sit on the bar or on a box inside or around it — apple.com's sticky nav#localnav never
+        // changes, the div#localnav-container inside it gets "sticky" and "reveal": each is watched on its own)
         for (const b of Array.from(document.querySelectorAll('header, nav, [role="banner"], [role="navigation"]'))) {
           if (clsTargets.length >= 12) break;
           const pos = getComputedStyle(b).position;
-          if ((pos === "fixed" || pos === "sticky") && !inside(b)) clsTargets.push(b);
+          if (pos === "fixed" || pos === "sticky") clsTargets.push(b);
         }
         // …and a bar that is a plain <div> named like one (apple.com's "localnav-container"), at the top of the page
         const BAR = /(^|[-_\s])((local|sub|top|main|site|page|global)?-?nav(bar|igation)?|header|topbar|toolbar|menubar|navbar)([-_\s]|$)/i;
         for (const b of Array.from(document.querySelectorAll("body div[id], body div[class]")).slice(0, 4000)) {
           if (clsTargets.length >= 12) break;
-          if (!BAR.test(`${b.id} ${typeof b.className === "string" ? b.className : ""}`) || inside(b)) continue;
+          if (!BAR.test(`${b.id} ${typeof b.className === "string" ? b.className : ""}`) || clsTargets.includes(b)) continue;
+          // (its box may hold the bar's own hidden menu too — apple.com's is 557 px tall with it)
           const r = b.getBoundingClientRect();
-          if (r.top + scrollY > 200 || r.height > innerHeight * 0.5) continue;
+          if (r.top + scrollY > 200 || r.height > innerHeight * 0.8) continue;
           clsTargets.push(b);
         }
       }
