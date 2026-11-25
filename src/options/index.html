@@ -1,0 +1,128 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>StyleLift — Settings</title>
+    <link rel="stylesheet" href="./options.css" />
+  </head>
+  <body>
+    <main class="card">
+      <h1><span class="mark"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 2l3 7 7 3-7 3-3 7-3-7-7-3 7-3z"/></svg></span> StyleLift Settings</h1>
+      <p class="lede">
+        StyleLift works fully without a key — extraction is deterministic. A DeepSeek key
+        only unlocks the <strong>Polish</strong> step, which names and describes the tokens
+        StyleLift already measured. Your key is stored locally in this browser and is sent
+        only to <code>api.deepseek.com</code> from the extension's background worker.
+      </p>
+
+      <label class="field">
+        <span>DeepSeek API key</span>
+        <input id="key" type="password" placeholder="sk-…" autocomplete="off" spellcheck="false" />
+      </label>
+
+      <label class="field">
+        <span>Model</span>
+        <select id="model">
+          <option value="deepseek-chat">deepseek-chat (default)</option>
+          <option value="deepseek-reasoner">deepseek-reasoner</option>
+        </select>
+      </label>
+
+      <div class="actions">
+        <button id="save" class="btn primary">Save</button>
+        <button id="clear" class="btn ghost">Clear key</button>
+      </div>
+      <div id="status" class="status" role="status"></div>
+
+      <p class="foot">
+        Get a key at <a href="https://platform.deepseek.com" target="_blank" rel="noreferrer">platform.deepseek.com</a>.
+      </p>
+    </main>
+
+    <main class="card">
+      <h2>WordPress</h2>
+      <p class="lede">
+        Send captured sections straight into WordPress as Elementor templates or draft pages.
+        Install the <a id="wp-plugin" href="/stylelift-importer.zip" download>StyleLift Importer plugin</a> on your site,
+        then create an application password under <strong>Users → Profile → Application Passwords</strong>.
+        The password is stored only in this browser and sent only to your site.
+      </p>
+      <label class="field">
+        <span>Site address</span>
+        <input id="wp-site" type="url" placeholder="https://your-site.com" autocomplete="off" spellcheck="false" />
+      </label>
+      <label class="field">
+        <span>Username</span>
+        <input id="wp-user" type="text" autocomplete="off" spellcheck="false" />
+      </label>
+      <label class="field">
+        <span>Application password</span>
+        <input id="wp-pass" type="password" placeholder="xxxx xxxx xxxx xxxx xxxx xxxx" autocomplete="off" spellcheck="false" />
+      </label>
+      <div class="actions">
+        <button id="wp-save" class="btn primary">Save and test connection</button>
+        <button id="wp-clear" class="btn ghost">Disconnect</button>
+      </div>
+      <div id="wp-status" class="status" role="status"></div>
+    </main>
+
+    <main class="card">
+      <h2>Publishing</h2>
+      <p class="lede">
+        After an export, the panel's <strong>Your export</strong> card can publish it to Netlify or Vercel for an
+        https link, or push it to a GitHub repository. Paste a personal access token for each service you use.
+        Tokens are stored only in this browser and sent only to that service.
+      </p>
+
+      <h3>Netlify</h3>
+      <label class="field">
+        <span>Personal access token</span>
+        <input id="netlify-token" type="password" autocomplete="off" spellcheck="false" />
+      </label>
+      <p class="foot">Create one at <a href="https://app.netlify.com/user/applications#personal-access-tokens" target="_blank" rel="noreferrer">app.netlify.com → User settings → Applications</a>.</p>
+      <div class="actions">
+        <button id="netlify-save" class="btn primary" data-provider="netlify">Save and test</button>
+        <button id="netlify-clear" class="btn ghost" data-provider="netlify">Remove</button>
+      </div>
+      <div id="netlify-status" class="status" role="status"></div>
+
+      <h3>Vercel</h3>
+      <label class="field">
+        <span>Access token</span>
+        <input id="vercel-token" type="password" autocomplete="off" spellcheck="false" />
+      </label>
+      <label class="field">
+        <span>Team ID (only to publish into a team)</span>
+        <input id="vercel-team" type="text" placeholder="team_…" autocomplete="off" spellcheck="false" />
+      </label>
+      <p class="foot">Create one at <a href="https://vercel.com/account/tokens" target="_blank" rel="noreferrer">vercel.com/account/tokens</a>.</p>
+      <div class="actions">
+        <button id="vercel-save" class="btn primary" data-provider="vercel">Save and test</button>
+        <button id="vercel-clear" class="btn ghost" data-provider="vercel">Remove</button>
+      </div>
+      <div id="vercel-status" class="status" role="status"></div>
+
+      <h3>GitHub</h3>
+      <label class="field">
+        <span>Personal access token</span>
+        <input id="github-token" type="password" placeholder="github_pat_… or ghp_…" autocomplete="off" spellcheck="false" />
+      </label>
+      <label class="field check">
+        <input id="github-private" type="checkbox" checked />
+        <span>Make new repositories private</span>
+      </label>
+      <p class="foot">
+        Create one at <a href="https://github.com/settings/personal-access-tokens/new" target="_blank" rel="noreferrer">github.com → Settings → Developer settings</a>:
+        a fine-grained token with <em>Administration</em> and <em>Contents</em> set to read and write (to create repositories and commit to them),
+        or a classic token with the <code>repo</code> scope.
+      </p>
+      <div class="actions">
+        <button id="github-save" class="btn primary" data-provider="github">Save and test</button>
+        <button id="github-clear" class="btn ghost" data-provider="github">Remove</button>
+      </div>
+      <div id="github-status" class="status" role="status"></div>
+    </main>
+    <script type="module" src="./options.ts"></script>
+  </body>
+</html>

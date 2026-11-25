@@ -1,0 +1,95 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>StyleLift Studio</title>
+    <link rel="stylesheet" href="./studio.css" />
+  </head>
+  <body>
+    <div id="app">
+      <header class="topbar">
+        <div class="tb-left">
+          <span class="brand" aria-hidden="true"><svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 2l3 7 7 3-7 3-3 7-3-7-7-3 7-3z"/></svg></span>
+          <button id="home-btn" class="tb-btn" data-icon="grid" data-tip="All your captures">Projects</button>
+          <span class="crumb-sep" aria-hidden="true">/</span>
+          <span id="project-title" class="project-title"></span>
+        </div>
+        <div class="tb-mid seg" id="scope-tabs" role="tablist" aria-label="Breakpoint you are editing"></div>
+        <div class="tb-right">
+          <div class="tb-group" role="group" aria-label="Canvas tools">
+            <button id="mode-reorder" class="tb-icon" data-icon="reorder" data-tip="Reorder — drag elements to a new place in the page's layout" data-key="M" aria-label="Reorder mode" aria-pressed="true"></button>
+            <button id="mode-free" class="tb-icon" data-icon="move" data-tip="Free move — drag anywhere, snapping to other elements and the grid (⇧ locks the axis)" data-key="M" aria-label="Free move mode" aria-pressed="false"></button>
+            <span class="tb-div" aria-hidden="true"></span>
+            <button id="grid-btn" class="tb-icon" data-icon="columns" data-tip="Layout grid" data-key="G" aria-label="Show the layout grid" aria-pressed="false"></button>
+            <button id="snap-btn" class="tb-icon" data-icon="magnet" data-tip="Snapping — hold ⌘ while dragging to place freely" aria-label="Snap while moving" aria-pressed="true"></button>
+          </div>
+          <div class="tb-group" role="group" aria-label="History">
+            <button id="undo-btn" class="tb-icon" data-icon="undo" data-tip="Undo" data-key="⌘Z" aria-label="Undo"></button>
+            <button id="redo-btn" class="tb-icon" data-icon="redo" data-tip="Redo" data-key="⇧⌘Z" aria-label="Redo"></button>
+          </div>
+          <div class="tb-group" role="group" aria-label="Zoom">
+            <button id="zoom-out" class="tb-icon" data-icon="zoomOut" data-tip="Zoom out" data-key="⌘ scroll" aria-label="Zoom out"></button>
+            <button id="zoom-label" class="tb-btn zoom" data-tip="Fit to screen" aria-label="Fit to screen">43%</button>
+            <button id="zoom-in" class="tb-icon" data-icon="zoomIn" data-tip="Zoom in" data-key="⌘ scroll" aria-label="Zoom in"></button>
+          </div>
+          <label class="toggle" data-tip="Play the page's animations on the canvas">
+            <input type="checkbox" id="anim-toggle" role="switch" />
+            <span class="switch" aria-hidden="true"></span>
+            <span data-icon="sparkles"></span><span class="tl">Animations</span>
+          </label>
+          <span id="save-state" class="save-state" role="status"></span>
+          <button id="preview-btn" class="tb-btn outline" data-icon="play" data-tip="Open the page in a new tab with your edits, live scrolling and animations">Preview</button>
+          <div class="export">
+            <button id="export-btn" class="tb-primary" data-icon="download" aria-haspopup="menu" aria-expanded="false">Export<span class="chev" data-icon="chevronDown"></span></button>
+            <div id="export-menu" class="menu" role="menu" hidden>
+              <div class="menu-label site-only">Whole site</div>
+              <button class="site-only" data-export="site-html" data-icon="globe" role="menuitem"><span class="mi"><b>HTML site</b><small>Every page, with the links between them</small></span></button>
+              <button class="site-only" data-export="site-next" data-icon="fileCode" role="menuitem"><span class="mi"><b>Next.js site</b><small>One route per page</small></span></button>
+              <div class="menu-label page-label">Editable project</div>
+              <button data-export="next" data-icon="fileCode" role="menuitem"><span class="mi"><b>Next.js</b><small>App Router · one component per section</small></span></button>
+              <button data-export="react" data-icon="atom" role="menuitem"><span class="mi"><b>React</b><small>Vite · one component per section</small></span></button>
+              <button data-export="html" data-icon="code" role="menuitem"><span class="mi"><b>HTML</b><small>index.html, styles.css, assets</small></span></button>
+              <div class="menu-label page-label">Single file</div>
+              <button data-export="single" data-icon="file" role="menuitem"><span class="mi"><b>Single-file HTML</b><small>Everything embedded in one .html</small></span></button>
+              <button data-export="elementor" data-icon="template" role="menuitem"><span class="mi"><b>Elementor template</b><small>.json for Templates → Import</small></span></button>
+            </div>
+          </div>
+        </div>
+      </header>
+      <aside class="left" aria-label="Pages and layers">
+        <div id="pages-panel" class="pages-panel" hidden>
+          <div class="panel-head">
+            <span class="ph-title"><span data-icon="file"></span>Pages</span>
+            <span id="page-count" class="ph-count"></span>
+          </div>
+          <div id="pages" class="pages" role="list"></div>
+        </div>
+        <div class="panel-head">
+          <span class="ph-title"><span data-icon="layers"></span>Layers</span>
+          <span id="layer-count" class="ph-count"></span>
+        </div>
+        <label class="search-wrap">
+          <span data-icon="search"></span>
+          <input id="layer-search" class="search" type="search" placeholder="Search layers" aria-label="Search layers" />
+        </label>
+        <div id="layers" class="layers" role="tree"></div>
+      </aside>
+      <main id="canvas" class="canvas">
+        <div id="stage" class="stage"></div>
+        <div id="home" class="home" hidden></div>
+      </main>
+      <aside class="right" aria-label="Properties">
+        <div id="panel-tabs" class="panel-tabs" role="tablist" aria-label="Panel">
+          <button data-tab="design" role="tab" class="on" aria-selected="true">Design</button>
+          <button data-tab="inspect" role="tab" aria-selected="false" data-tip="The selected layer's code — exactly what the exports contain">Inspect</button>
+        </div>
+        <div id="props" class="props"></div>
+      </aside>
+      <div id="toast" class="toast" role="status" hidden></div>
+      <div id="toolbar" class="toolbar" role="toolbar" aria-label="Tools"></div>
+      <div id="tip" class="tip" role="tooltip" hidden></div>
+    </div>
+    <script type="module" src="./studio.ts"></script>
+  </body>
+</html>

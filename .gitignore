@@ -1,0 +1,20 @@
+# dependencies
+node_modules/
+
+# build output (made by `npm run build` / `npm run build:test`)
+dist/
+dist-test/
+dist-bench*/
+public/stylelift-importer.zip
+
+# test runs and throwaway builds
+*.noindex/
+.sl-fw-builds/
+scripts/.*.tmp.mjs
+
+# local settings and secrets
+.env
+.env.*
+*.local
+.DS_Store
+*.log

@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>StyleLift Preview</title>
+<style>html,body{margin:0;font:14px system-ui,sans-serif;color:#555;display:grid;place-items:center;height:100%}</style>
+</head>
+<body>
+<p>Opening the preview…</p>
+<script>
+// Studio's Preview. A sandboxed extension page (see "sandbox" in manifest.json): it has no access to the
+// extension or the browser's extension APIs and its own unique origin, so the page under preview runs
+// exactly as its exports would, inline scripts, the scroll-in trigger, Lottie / Rive players and any site
+// scripts kept at capture included. Studio opens it and sends the export's HTML; nothing else is accepted.
+// Also embedded by Studio itself ("Play live" on the canvas: a model of yours running over its artboard) — then its
+// parent is Studio (this page can't be framed by websites: it isn't web-accessible).
+var host = window.parent !== window ? window.parent : window.opener;
+addEventListener("message", function (e) {
+  var d = e.data;
+  if (!host || e.source !== host || !d || d.type !== "sl-preview" || typeof d.html !== "string") return;
+  document.open();
+  document.write(d.html);
+  document.close();
+});
+if (host) host.postMessage({ type: "sl-preview-ready" }, "*");
+else document.querySelector("p").textContent = "Open the preview from StyleLift Studio.";
+</script>
+</body>
+</html>

@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>StyleLift</title>
+    <link rel="stylesheet" href="./panel.css" />
+  </head>
+  <body>
+    <header class="topbar">
+      <div class="brand">
+        <span class="brand-mark"><svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 2l3 7 7 3-7 3-3 7-3-7-7-3 7-3z"/></svg></span>
+        <span class="brand-name">StyleLift</span>
+      </div>
+      <div class="top-actions">
+        <button id="copy-btn" class="btn ghost" data-icon="copy" title="Copy the active tab">Copy</button>
+        <button id="download-btn" class="btn ghost" data-icon="download" title="Download .md">.md</button>
+        <button id="report-btn" class="btn icon" data-icon="flag" title="Report a problem" aria-label="Report a problem"></button>
+        <button id="settings-btn" class="btn icon" data-icon="settings" title="Settings" aria-label="Settings"></button>
+      </div>
+    </header>
+
+    <div class="action-row">
+      <button id="extract-btn" class="btn primary" data-icon="palette">Extract from page</button>
+      <button id="inspect-btn" class="btn" data-icon="inspect">Inspect a component</button>
+    </div>
+    <div class="action-row tight">
+      <button id="edit-btn" class="btn" data-icon="edit">Visual editor</button>
+      <button id="ai-btn" class="btn accent" data-icon="wand" disabled title="Add a DeepSeek key in settings">
+        Polish with DeepSeek
+      </button>
+    </div>
+
+    <div class="action-row tight">
+      <button id="source-btn" class="btn source" data-icon="code">Get source code — page or whole site</button>
+    </div>
+
+    <div id="meta-line" class="meta-line"></div>
+    <div id="status" class="status" role="status"></div>
+
+    <div id="modebar" class="modebar"></div>
+    <nav class="tabs" id="tabs"></nav>
+
+    <div class="subtoggle" id="subtoggle">
+      <button class="density active" data-density="compact">Compact</button>
+      <button class="density" data-density="extended">Extended</button>
+    </div>
+
+    <main id="output" class="output">
+      <div class="empty">
+        Open any site, then <strong>Extract from page</strong> for its full design system,
+        or <strong>Inspect a component</strong> to reverse-engineer one section — structure,
+        animations, code, and a replication guide. <strong>Get source code</strong> captures the
+        page or the whole site (Framer, Webflow, GSAP, React… animated pages included) as an
+        editable HTML / React / Elementor project. All values are measured from the page.
+      </div>
+    </main>
+
+    <script type="module" src="./panel.ts"></script>
+  </body>
+</html>
