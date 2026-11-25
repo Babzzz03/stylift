@@ -125,6 +125,8 @@ export interface CaptureStats {
   heldAnimations?: number;
   /** reveals whose finished look would have stayed hidden (their block kept its "before" class): shown */
   revealsPinned?: number;
+  /** progress variables (--progress…) the page's scripts set as it scrolled, played back on the scroll timeline */
+  scrollVars?: number;
   cursorFollowers?: number;
   /** count-up numbers written into the copy at the value they reached */
   countersSet?: number;
@@ -356,6 +358,36 @@ export async function capturePage(rawOpts?: CaptureOptions): Promise<CaptureResu
       `/* Pinned sections (GSAP ScrollTrigger pins), recorded by StyleLift: each is held on screen over the\n` +
       `   stretch of scrolling the page pinned it for, on the page's scroll timeline. */\n` +
       `@supports (animation-timeline: scroll()) {\n${out.join("\n")}\n}\n`
+    );
+  }
+
+  // ── Progress variables replayed (a script sets --progress on a bar as you scroll; its CSS reads var(--progress)) ──
+  // The variable itself, sampled at every stop, is played back on the page's scroll timeline — registered with
+  // @property so it moves smoothly — and everything the site's CSS draws from it follows, exactly.
+  const VAR_ATTR = "data-sl-var";
+  const varHosts = new Set<HTMLElement>();
+  let varStopY = 0; // the last stop sampled
+  const varSamples = new Map<HTMLElement, Map<string, { y: number; v: string }[]>>();
+  const varPlays: { el: HTMLElement; id: string; keys: { at: number; decl: string }[]; a: number; b: number }[] = [];
+  const varTypes = new Map<string, { syntax: string; zero: string }>();
+  function varCss(): string {
+    const out: string[] = [];
+    for (const [prop, r] of varTypes) out.push(`@property ${prop} { syntax: "${r.syntax}"; inherits: true; initial-value: ${r.zero}; }`);
+    for (const p of varPlays) {
+      out.push(`@keyframes sl-var-${p.id} { ${p.keys.map((k) => `${Math.round(k.at * 10000) / 100}% { ${k.decl} }`).join(" ")} }`);
+      out.push(`[${VAR_ATTR}="${p.id}"] { animation: sl-var-${p.id} linear both; animation-timeline: scroll(root block); animation-range: ${p.a}px ${p.b}px; }`);
+    }
+    return (
+      `/* Progress variables the page's scripts set as it scrolled (--progress…), recorded by StyleLift and played
+` +
+      `   back on the page's scroll timeline: what the site's CSS draws from them follows exactly. Without
+` +
+      `   scroll timelines the values stay at those of the top of the page. */
+` +
+      `@supports (animation-timeline: scroll()) {
+${out.join("\n")}
+}
+`
     );
   }
 
@@ -1077,6 +1109,7 @@ export async function capturePage(rawOpts?: CaptureOptions): Promise<CaptureResu
         if (r.attributeName !== "style" || scrollPhase !== "down" || !(t instanceof HTMLElement) || t === document.documentElement || t === document.body) continue;
         const vars = (v: string | null) => (v || "").split(";").filter((d) => /^\s*--/.test(d)).join(";");
         if (vars(t.getAttribute("style")) === vars(r.oldValue)) continue;
+        if (varHosts.size < 200) varHosts.add(t);
         const nowV = performance.now();
         if (nowV - (varLook.get(t) || 0) < 90) continue;
         varLook.set(t, nowV);
@@ -1284,6 +1317,27 @@ export async function capturePage(rawOpts?: CaptureOptions): Promise<CaptureResu
         for (const el of classSelf) if (!classKids.has(el)) observe(el); // …and their own
         maxWindowScroll = Math.max(maxWindowScroll, scrollY);
         sampleScrollClasses(Math.round(scrollY));
+        for (const h of varHosts) {
+          let m = varSamples.get(h);
+          if (!m) varSamples.set(h, (m = new Map()));
+          for (let i = 0; i < h.style.length; i++) {
+            const prop = h.style.item(i);
+            if (!prop.startsWith("--")) continue;
+            let arr = m.get(prop);
+            if (!arr) {
+              // its value at the top of the page (before the pass), as the first sample
+              const pre = liveSnapshot.find((x) => x.el === h)?.style || "";
+              const m0 = new RegExp(`(?:^|;)\\s*${prop.replace(/[-]/g, "\\-")}\\s*:\\s*([^;]+)`).exec(pre);
+              // …and still that at the stop before this one (it only began to change since)
+              arr = m0 ? [{ y: startY, v: m0[1].trim() }, ...(varStopY > startY ? [{ y: varStopY, v: m0[1].trim() }] : [])] : [];
+              m.set(prop, arr);
+            }
+            const v = h.style.getPropertyValue(prop).trim();
+            const last = arr[arr.length - 1];
+            if (arr.length < 120 && (!last || last.y !== Math.round(scrollY))) arr.push({ y: Math.round(scrollY), v });
+          }
+        }
+        varStopY = Math.round(scrollY);
         if (o.scrollLinked) await grabScrubFrames(Math.round(scrollY));
         const yy = Math.round(scrollY);
         for (const el of stickyWatch) {
@@ -1948,6 +2002,70 @@ export async function capturePage(rawOpts?: CaptureOptions): Promise<CaptureResu
           /* detached */
         }
       }
+    }
+    // Progress variables the page set as we scrolled (--progress on a bar): played back on the scroll timeline (varCss).
+    // Only what follows the position — numbers in one unit, at least three values, back at the top where it began,
+    // never changing at rest — and only when the site's own CSS never gives that variable a value of another kind
+    // (registering its type would void those).
+    if (o.scrollLinked && varSamples.size) {
+      let sheetText: string | null = null;
+      const cssAgrees = (prop: string, re: RegExp) => {
+        if (sheetText === null) {
+          sheetText = "";
+          for (const sh of Array.from(document.styleSheets)) {
+            try {
+              for (const r of Array.from(sh.cssRules)) sheetText += r.cssText + "\n";
+            } catch {
+              /* cross-origin: can't read it */
+            }
+            if (sheetText.length > 6_000_000) break;
+          }
+        }
+        const rx = new RegExp(`${prop.replace(/[-]/g, "\\-")}\\s*:\\s*([^;}]+)`, "g");
+        for (const m of sheetText.matchAll(rx)) if (!re.test(m[1].trim())) return false;
+        return true;
+      };
+      const UNIT = /^(-?\d*\.?\d+(?:e-?\d+)?)(px|%|deg|turn|rad)?$/;
+      for (const [el, m] of varSamples) {
+        if (varPlays.length >= 60 || !el.isConnected || timerTouched.has(el) || slideBlock.has(el) || stillRoots.has(el) || el.hasAttribute(SCROLL_ATTR) || el.hasAttribute(REVEAL_ATTR)) continue;
+        const take: { prop: string; arr: { y: number; v: string }[] }[] = [];
+        for (const [prop, arr] of m) {
+          if (arr.length < 3) continue;
+          const parsed = arr.map((x) => UNIT.exec(x.v));
+          if (parsed.some((x) => !x)) continue;
+          const unit = parsed[0]![2] || "";
+          if (parsed.some((x) => (x![2] || "") !== unit) || new Set(parsed.map((x) => parseFloat(x![1]))).size < 3) continue;
+          if (el.style.getPropertyValue(prop).trim() !== arr[0].v) continue; // not where it began, back at the top
+          const syntax = unit === "px" ? "<length>" : unit === "%" ? "<percentage>" : unit ? "<angle>" : "<number>";
+          const zero = unit === "px" ? "0px" : unit === "%" ? "0%" : unit ? `0${unit}` : "0";
+          const ok = unit === "px" ? /^(-?\d*\.?\d+px|0|calc\(.*\))$/ : unit === "%" ? /^(-?\d*\.?\d+%|calc\(.*\))$/ : unit ? /^(-?\d*\.?\d+(deg|turn|rad)|calc\(.*\))$/ : /^(-?\d*\.?\d+(e-?\d+)?|calc\(.*\))$/;
+          const known = varTypes.get(prop);
+          if ((known && known.syntax !== syntax) || !cssAgrees(prop, ok)) continue;
+          varTypes.set(prop, { syntax, zero });
+          take.push({ prop, arr });
+        }
+        if (!take.length) continue;
+        // one animation for the element: every variable of it at each stop (they were sampled at the same stops)
+        const ys = Array.from(new Set(take.flatMap((t) => t.arr.map((x) => x.y)))).sort((p, q) => p - q);
+        const a = ys[0], b = ys[ys.length - 1];
+        if (b - a < 50) continue;
+        const valueAt = (arr: { y: number; v: string }[], y: number) => { let v = arr[0].v; for (const x of arr) { if (x.y <= y) v = x.v; else break; } return v; };
+        const keys: { at: number; decl: string }[] = [];
+        let prev = "";
+        ys.forEach((y, i) => {
+          const decl = take.map((t) => `${t.prop}: ${valueAt(t.arr, y)};`).join(" ");
+          const next = i + 1 < ys.length ? take.map((t) => `${t.prop}: ${valueAt(t.arr, ys[i + 1])};`).join(" ") : "";
+          if (decl === prev && decl === next) return; // the middle of a run of equal stops adds nothing
+          keys.push({ at: (y - a) / (b - a), decl });
+          prev = decl;
+        });
+        const id = `v${varPlays.length + 1}`;
+        el.setAttribute(VAR_ATTR, id);
+        el.removeAttribute("data-sl-gsap"); // its own variable drives it now, not an entrance of ours
+        varPlays.push({ el, id, keys, a, b });
+        decided.add(el);
+      }
+      if (varPlays.length) stats.scrollVars = varPlays.length;
     }
     // count-ups drawn from a custom property that dropped back: show the target they reached
     for (const [el, peaks] of varPeak) {
@@ -2809,10 +2927,20 @@ export async function capturePage(rawOpts?: CaptureOptions): Promise<CaptureResu
     try {
       if (!clsTargets) {
         clsTargets = [document.documentElement, document.body];
+        const inside = (b: Element) => clsTargets!.some((t) => t !== document.documentElement && t !== document.body && (t.contains(b) || b.contains(t)));
         for (const b of Array.from(document.querySelectorAll('header, nav, [role="banner"], [role="navigation"]'))) {
-          if (clsTargets.length >= 10) break;
+          if (clsTargets.length >= 12) break;
           const pos = getComputedStyle(b).position;
-          if ((pos === "fixed" || pos === "sticky") && !clsTargets.some((t) => t !== document.documentElement && t !== document.body && t.contains(b))) clsTargets.push(b);
+          if ((pos === "fixed" || pos === "sticky") && !inside(b)) clsTargets.push(b);
+        }
+        // …and a bar that is a plain <div> named like one (apple.com's "localnav-container"), at the top of the page
+        const BAR = /(^|[-_\s])((local|sub|top|main|site|page|global)?-?nav(bar|igation)?|header|topbar|toolbar|menubar|navbar)([-_\s]|$)/i;
+        for (const b of Array.from(document.querySelectorAll("body div[id], body div[class]")).slice(0, 4000)) {
+          if (clsTargets.length >= 12) break;
+          if (!BAR.test(`${b.id} ${typeof b.className === "string" ? b.className : ""}`) || inside(b)) continue;
+          const r = b.getBoundingClientRect();
+          if (r.top + scrollY > 200 || r.height > innerHeight * 0.5) continue;
+          clsTargets.push(b);
         }
       }
       if (scrollCls.length > 400) return;
@@ -3856,6 +3984,12 @@ export async function capturePage(rawOpts?: CaptureOptions): Promise<CaptureResu
       st.textContent = pinCss();
       head.appendChild(st);
     }
+    if (varPlays.length) {
+      const st = document.createElement("style");
+      st.setAttribute("data-sl-scroll-vars", String(varPlays.length));
+      st.textContent = varCss();
+      head.appendChild(st);
+    }
     if (linked.length) {
       const st = document.createElement("style");
       st.setAttribute("data-sl-scroll-linked", String(linked.length));
@@ -4005,7 +4139,7 @@ export async function capturePage(rawOpts?: CaptureOptions): Promise<CaptureResu
     for (const sw of swappedBars) sw.el.replaceChildren(...sw.liveKids);
     unmark();
     for (const r of reveals) { r.el.removeAttribute(REVEAL_ATTR); r.el.removeAttribute(TL_USE_ATTR); } // leave the live page untouched
-    document.querySelectorAll("[data-sl-gsap], [data-sl-gsap-loop], [data-sl-wfs], [data-sl-pin], [data-sl-pinned], [data-sl-hov], [data-sl-hovt], [data-sl-magnet], [data-sl-pull], [data-sl-tilt], [data-sl-tilting], [data-sl-cursor], [data-sl-cursor-rest], [data-sl-gl], [data-sl-exited], [data-sl-tabs], [data-sl-paddle], [data-sl-scroller], [data-sl-media], [data-sl-media-v], [data-sl-media-ui], [data-sl-scroll-classes], [data-sl-hold]").forEach((e) => { for (const a of ["data-sl-gsap", "data-sl-gsap-loop", "data-sl-wfs", "data-sl-pin", "data-sl-pinned", "data-sl-hov", "data-sl-hovt", "data-sl-magnet", "data-sl-pull", "data-sl-tilt", "data-sl-tilting", "data-sl-cursor", "data-sl-cursor-rest", "data-sl-gl", "data-sl-exited", "data-sl-tabs", "data-sl-paddle", "data-sl-scroller", "data-sl-media", "data-sl-media-v", "data-sl-media-ui", "data-sl-scroll-classes", "data-sl-hold"]) e.removeAttribute(a); });
+    document.querySelectorAll("[data-sl-gsap], [data-sl-gsap-loop], [data-sl-wfs], [data-sl-pin], [data-sl-pinned], [data-sl-hov], [data-sl-hovt], [data-sl-magnet], [data-sl-pull], [data-sl-tilt], [data-sl-tilting], [data-sl-cursor], [data-sl-cursor-rest], [data-sl-gl], [data-sl-exited], [data-sl-tabs], [data-sl-paddle], [data-sl-scroller], [data-sl-media], [data-sl-media-v], [data-sl-media-ui], [data-sl-scroll-classes], [data-sl-hold], [data-sl-var]").forEach((e) => { for (const a of ["data-sl-gsap", "data-sl-gsap-loop", "data-sl-wfs", "data-sl-pin", "data-sl-pinned", "data-sl-hov", "data-sl-hovt", "data-sl-magnet", "data-sl-pull", "data-sl-tilt", "data-sl-tilting", "data-sl-cursor", "data-sl-cursor-rest", "data-sl-gl", "data-sl-exited", "data-sl-tabs", "data-sl-paddle", "data-sl-scroller", "data-sl-media", "data-sl-media-v", "data-sl-media-ui", "data-sl-scroll-classes", "data-sl-hold", "data-sl-var"]) e.removeAttribute(a); });
     document.documentElement.removeAttribute("data-sl-wf-css");
     document.querySelectorAll(`[${RETAG_ATTR}]`).forEach((e) => e.removeAttribute(RETAG_ATTR));
     document.querySelectorAll(`[${COUNT_ATTR}]`).forEach((e) => e.removeAttribute(COUNT_ATTR));

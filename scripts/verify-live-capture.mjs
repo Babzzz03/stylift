@@ -150,7 +150,7 @@ writeFileSync(join(outdir, "slides.html"), `<!doctype html><html><head><style>bo
 writeFileSync(join(outdir, "widgets.html"), `<!doctype html><html><head><style>body{margin:0;font:16px sans-serif} header{position:fixed;top:0;left:0;right:0;height:50px;background:#fff;z-index:9} .tall{height:1400px}
 .tab.current{font-weight:700} .panel{height:80px} .strip{width:600px;overflow-x:auto;white-space:nowrap} .strip li{display:inline-block;width:400px;height:80px;margin-right:20px;background:#ddd}
 .frame{width:600px;overflow:hidden} .track{display:flex;width:max-content} .track div{width:600px;height:60px;flex:none;background:#ccc} .ui.playing .start{opacity:0}</style></head><body>
-<header id="hd"><a href="/">Logo</a><span id="hdtag" style="opacity: 0; transform: translate(-5px, 0px); filter: blur(0px);">The house of coffee</span></header><div style="height:60px"></div>
+<header id="hd"><a href="/">Logo</a><span id="hdtag" style="opacity: 0; transform: translate(-5px, 0px); filter: blur(0px);">The house of coffee</span></header><div id="lnav" class="localnav-container theme-reveal-on-scroll" style="position:relative"><div class="localnav-wrap">iPhone 18 Pro · Buy</div></div><div style="height:60px"></div>
 <ul role="tablist" id="tl"><li><a href="#wp1" id="wt1" role="tab" aria-controls="wp1" aria-selected="true" class="tab current">One</a></li><li><a href="#wp2" id="wt2" role="tab" aria-controls="wp2" aria-selected="false" class="tab">Two</a></li></ul>
 <div id="wp1" role="tabpanel" class="panel">P1</div><div id="wp2" role="tabpanel" class="panel" hidden>P2</div>
 <div class="gal"><ul class="strip" id="wst"><li>a</li><li>b</li><li>c</li></ul><button id="wprev" aria-label="Previous slide">‹</button><button id="wnext" aria-label="Next slide">›</button></div>
@@ -160,7 +160,7 @@ writeFileSync(join(outdir, "widgets.html"), `<!doctype html><html><head><style>b
 <style>@keyframes swp { from { opacity: .3 } to { opacity: 1 } } @keyframes spin { to { transform: rotate(1turn) } } .swp { animation: swp .8s forwards } .spin { animation: spin 2s linear infinite }</style>
 <p id="hold-top" class="swp">a one-shot animation in the first screen</p>
 <div class="tall"></div><p id="hold-low" class="swp">a one-shot animation further down</p><p id="spin-low" class="spin" style="width:40px">endless</p><div id="meas" style="--mw: 0px; position: relative; height: 80px"><span style="position:absolute;left:calc(var(--mw) * .5)">placed in a measured width</span></div><div class="tall"></div>
-<script>addEventListener("scroll", () => { document.body.classList.toggle("show-bar", scrollY > 600); hd.classList.toggle("is-scrolled", scrollY > 100); }); let ly = 0; addEventListener("scroll", () => { hd.classList.toggle("nav-up", scrollY > ly && scrollY > 300); ly = scrollY; }); setTimeout(() => document.body.classList.add("loaded"), 1800); addEventListener("scroll", () => { if (scrollY > 900) meas.style.setProperty("--mw", "640px"); });</script>
+<script>addEventListener("scroll", () => { document.body.classList.toggle("show-bar", scrollY > 600); hd.classList.toggle("is-scrolled", scrollY > 100); }); let ly = 0; addEventListener("scroll", () => { hd.classList.toggle("nav-up", scrollY > ly && scrollY > 300); ly = scrollY; }); setTimeout(() => document.body.classList.add("loaded"), 1800); addEventListener("scroll", () => document.getElementById("lnav").classList.toggle("reveal", scrollY > 700)); addEventListener("scroll", () => { if (scrollY > 900) meas.style.setProperty("--mw", "640px"); });</script>
 </body></html>`);
 // a reveal an eased scroll animation drives over a long stretch (as apple.com's: each frame moves part of the way
 // to where the scroll says it should be, so it keeps moving a moment after each stop)
@@ -196,6 +196,11 @@ writeFileSync(join(outdir, "faraway.html"), `<!doctype html><html><head><style>b
 writeFileSync(join(outdir, "ownanim.html"), `<!doctype html><html><head><style>body{margin:0;font:40px sans-serif;background:#000;color:#fff} .tall{height:1600px} @keyframes swipe{from{background-position:160% 0}to{background-position:0 0}} .grad{color:transparent;background:linear-gradient(90deg,#fff,#8cf) 160% 0/300% 100%;-webkit-background-clip:text;background-clip:text;opacity:0;transform:translateY(20px);transition:opacity .4s,transform .4s} .grad.animate{animation:swipe 1.2s linear forwards}</style></head><body>
 <div class="tall"></div><p id="gh" class="grad">Welcome to the mother chip.</p><div class="tall"></div><div class="tall"></div>
 <script>{ const g = document.getElementById("gh"); addEventListener("scroll", () => { if (g.getBoundingClientRect().top < innerHeight * 0.8 && !g.classList.contains("animate")) { g.classList.add("animate"); g.style.opacity = "1"; g.style.transform = "matrix(1, 0, 0, 1, 0, 0)"; } }); }</script></body></html>`);
+// a bar a script slides in through a progress variable as you scroll (apple.com's local nav: --progress on it, its CSS
+// reading var(--progress)): the variable itself is replayed on the scroll timeline
+writeFileSync(join(outdir, "progvar.html"), `<!doctype html><html><head><style>body{margin:0;font:16px sans-serif} .tall{height:1500px} #lbar{position:fixed;top:0;left:0;right:0;height:50px;background:#333;color:#fff;transform:translateY(calc((1 - var(--progress)) * -100%))}</style></head><body>
+<div id="lbar" style="--progress: 0;">iPhone 18 Pro · Explore · Buy</div><div class="tall"></div><div class="tall"></div><div class="tall"></div>
+<script>{ const b = document.getElementById("lbar"); addEventListener("scroll", () => { const p = Math.max(0, Math.min(1, (scrollY - 600) / 400)); b.style.setProperty("--progress", String(Math.round(p * 1000) / 1000)); }); }</script></body></html>`);
 // a <picture> whose <source> offers a 1x and a 2x file (as apple.com's icons): a high-density screen picks the
 // 2x one; the copy must keep showing it at its 1x size
 {
@@ -674,6 +679,21 @@ for (const variant of ["", "#bundled"]) {
   const g = new JSDOM(oc.html || "<html></html>").window.document.querySelector("#gh");
   ok(!!g && g.classList.contains("animate") && g.hasAttribute("data-sl-hold") && !g.hasAttribute("data-sl-in") && !g.hasAttribute("data-sl-reveal") && /opacity:\s*1/.test(g.getAttribute("style") || ""), `a heading that comes in with its own animation (set off by a class) keeps that class and animation, held until it comes into view — not replaced by ours (class "${g?.className}", ${g?.hasAttribute("data-sl-hold") ? "held" : "not held"}, style "${g?.getAttribute("style")}")`);
 }
+{ const vc = await capture(synthUrl.replace("page.html", "progvar.html"), {}, 500).catch((e) => ({ html: "", error: String(e) }));
+  const html = vc.html || "";
+  ok(/<div id="lbar"[^>]*data-sl-var="v\d+"/.test(html) && /@property --progress \{ syntax: "<number>"/.test(html) && /@keyframes sl-var-v\d+ \{[^}]*--progress: 0;[^@]*--progress: 1;/.test(html), "a progress variable a script sets as you scroll (--progress) is recorded and registered to play back on the scroll timeline");
+  writeFileSync(join(outdir, "progvar.captured.html"), html);
+  const t = await getJSON(`/json/new?about:blank`, "PUT");
+  const c = cdpConnect(t.webSocketDebuggerUrl); await c.ready;
+  await c.send("Page.enable");
+  await c.send("Emulation.setDeviceMetricsOverride", { width: 1440, height: 900, deviceScaleFactor: 1, mobile: false });
+  await c.send("Page.navigate", { url: synthUrl.replace("page.html", "progvar.captured.html") });
+  await sleep(1500);
+  const at = async (y) => { await c.send("Runtime.evaluate", { expression: `scrollTo(0, ${y})` }); await sleep(400); return (await c.send("Runtime.evaluate", { expression: `Math.round(document.getElementById("lbar").getBoundingClientRect().top)`, returnByValue: true })).result.value; };
+  const top = await at(0), mid = await at(810), down = await at(1600);
+  ok(top === -50 && mid < -5 && mid > -45 && down === 0, `…and in the copy the bar slides in where it did on the site (top ${top}px at the start, ${mid}px half way, ${down}px once scrolled past)`);
+  c.close(); await getJSON(`/json/close/${t.id}`).catch(() => {});
+}
 { const pc = await capture(synthUrl.replace("page.html", "picture.html"), {}, 500, null, 2).catch((e) => ({ html: "", error: String(e) }));
   const d = new JSDOM(pc.html || "<html></html>").window.document;
   const im = d.querySelector("#picimg");
@@ -708,6 +728,10 @@ for (const variant of ["", "#bundled"]) {
   let bodyRules = [], hdRules = [];
   try { bodyRules = JSON.parse(a("body", "data-sl-scroll-classes") || "[]"); hdRules = JSON.parse(a("#hd", "data-sl-scroll-classes") || "[]"); } catch {}
   const sb = bodyRules.find((r) => r.t === "show-bar"), sh = hdRules.find((r) => r.t === "is-scrolled");
+  let lnRules = [];
+  try { lnRules = JSON.parse(a("#lnav", "data-sl-scroll-classes") || "[]"); } catch {}
+  const lr = lnRules.find((r) => r.t === "reveal");
+  ok(!!lr && lr.a > 400 && lr.a < 1100 && lr.b === null, `a bar that is a plain <div> named like one (localnav-container) gets its scroll classes replayed too (reveal from ${lr?.a}px)`);
   ok(!!sb && sb.a > 300 && sb.a < 900 && sb.b === null && !!sh && sh.a > 0 && sh.a < 500 && !bodyRules.some((r) => r.t === "loaded") && !hdRules.some((r) => r.t === "nav-up"), `classes set past a scroll position are replayed there (body show-bar from ${sb?.a}px, header is-scrolled from ${sh?.a}px) — not a "loaded" flag, nor a header hiding on the way down (${JSON.stringify(bodyRules)} ${JSON.stringify(hdRules)})`);
   // (the panel adds the trigger script when it sees these marks: the same test as panel.ts addMotionTrigger)
   const lit = (/if \(!\/(.+?)\/\.test\(r\.html\)/.exec(readFileSync("src/panel/panel.ts", "utf8")) || [])[1];

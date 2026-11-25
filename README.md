@@ -296,7 +296,12 @@ Everything you changed in the visual editor is baked into every export.
   captions taking turns: anything that changed while scrolling is sampled at every stop; one that
   turns on and off again while on screen is replayed on the scroll position.
 - **Progress variables** — a script setting a variable on a section (`--progress`, `--x`) moves its
-  children through CSS without touching them; their look is followed with it.
+  children through CSS without touching them; their look is followed with it. And the variable itself is
+  replayed: sampled at every stop of the scroll pass (from its value at the top), registered with
+  `@property` (number / length / percentage / angle — only when the site's own CSS never gives it a value of
+  another kind) and played on the page's scroll timeline, so everything the site's CSS draws from it follows
+  exactly (apple.com's local nav sliding in on `--progress`). Only what follows the position: numbers in one
+  unit, at least three values, back at the top where it began, never changing at rest.
 - **Pointer effects run by scripts** — the pointer is moved inside each hoverable element: a part
   that shifts toward it is **magnetic** (its share of the pointer's offset is measured), one that
   turns in 3D is **tilted** (its angle measured); then it is moved across the page: a small element
