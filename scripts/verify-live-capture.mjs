@@ -242,7 +242,7 @@ writeFileSync(join(outdir, "manynavs.html"), `<!doctype html><html><head><style>
 <nav id="gn" style="position:relative;height:44px"><div class="globalnav-content" style="width:980px;margin:auto">${Array.from({ length: 10 }, (_, i) => `<div class="globalnav-item" style="display:inline-block;width:60px">Item ${i}<div class="globalnav-flyout globalnav-submenu" style="position:absolute;visibility:hidden;height:0">menu</div></div>`).join("")}</div></nav>
 <nav id="mn"><div id="mnc" class="localnav-container" style="height:44px">iPhone · Overview · Buy</div></nav>
 ${Array.from({ length: 14 }, (_, i) => `<section><nav role="navigation" class="tabnav">tabs ${i}</nav></section>`).join("")}
-<script>addEventListener("scroll", () => document.getElementById("mnc").classList.toggle("reveal", scrollY > 900));</script></body></html>`);
+<script>addEventListener("scroll", () => document.getElementById("mnc").classList.toggle("reveal", scrollY > 900)); addEventListener("scroll", () => { if (scrollY > 2000) { document.documentElement.classList.remove("enhanced-rt"); document.documentElement.classList.add("no-enhanced-rt"); } else { document.documentElement.classList.add("enhanced-rt"); document.documentElement.classList.remove("no-enhanced-rt"); } });</script></body></html>`);
 // letters a script slides in by switching a CSS variable once as their word comes into view (and back when it
 // leaves; the site's CSS glides them) — and splits the text into letters AGAIN on every resize (wearebulletproof.com's
 // "DON JULIO"): the letters the scroll pass watched must be the ones the copy keeps, each following the scroll
@@ -807,6 +807,8 @@ for (const variant of ["", "#bundled"]) {
   try { rules = JSON.parse(el?.getAttribute("data-sl-scroll-classes") || "[]"); } catch {}
   const rv = rules.find((r) => r.t === "reveal");
   ok(!!rv && rv.a > 500 && rv.a < 1300, `a local nav bar on a page with many sticky tab navs further down is still watched — its "reveal" replayed (${JSON.stringify(rules)})`);
+  const hr = new JSDOM(mc.html || "<html></html>").window.document.documentElement.getAttribute("data-sl-scroll-classes") || "";
+  ok(!/enhanced-rt/.test(hr), `…a feature flag the page switches on <html> (enhanced-rt → no-enhanced-rt) is not replayed as scroll state (${hr || "none"})`);
 }
 { const rc = await capture(synthUrl.replace("page.html", "resplit.html"), {}, 500).catch((e) => ({ html: "", error: String(e) }));
   const cs = [...new JSDOM(rc.html || "<html></html>").window.document.querySelectorAll("#rp > *")];

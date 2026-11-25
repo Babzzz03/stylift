@@ -3290,8 +3290,11 @@ ${out.join("\n")}
       for (const s0 of scrollCls) for (const t of s0.c.get(el) || []) all.add(t);
       const rules: { t: string; a: number; b: number | null }[] = [];
       const top = scrollCls[0].c.get(el) || new Set<string>();
+      // feature flags, Modernizr-style ("x" / "no-x": apple.com drops "enhanced-rt" for "no-enhanced-rt" when frames
+      // run slow — the capture's doing, not the scroll's)
+      const flag = (t: string) => /^no-/.test(t) || all.has("no-" + t);
       for (const t of all) {
-        if (DIRECTION.test(t) || STATE.test(t)) continue;
+        if (DIRECTION.test(t) || STATE.test(t) || flag(t)) continue;
         // back at the top now (the copy is taken here): as it was at the top before the pass
         if (el.classList.contains(t) !== top.has(t)) continue;
         const on = scrollCls.map((s0) => !!s0.c.get(el)?.has(t));
