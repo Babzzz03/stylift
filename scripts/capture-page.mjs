@@ -1,6 +1,7 @@
 // Dev tool: one local page through the capture (built from source) in headless Chrome at 1440×900 — prints the
 // chosen elements' opening tags (and optionally the copy's StyleLift <style> blocks) and the stats.
-//   node scripts/capture-page.mjs <page.html> id1,id2 [--css] [--out copy.html]
+//   node scripts/capture-page.mjs <page.html | https://…> id1,id2 [--css] [--out copy.html] [--sel "css selector"] [--n 6]
+// (a URL is opened as it is — the site itself, without the extension's page-start recorder or live 3D)
 import { build } from "esbuild";
 import { spawn } from "node:child_process";
 import { createServer } from "node:http";
@@ -10,14 +11,15 @@ import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 const args = process.argv.slice(2);
 const flag = (n) => { const i = args.indexOf(n); return i >= 0 ? args[i + 1] : null; };
-const [PAGE, IDS = ""] = args.filter((a, i) => !a.startsWith("--") && args[i - 1] !== "--out");
+const [PAGE, IDS = ""] = args.filter((a, i) => !a.startsWith("--") && !["--out", "--sel", "--n"].includes(args[i - 1]));
+const REMOTE = /^https?:\/\//.test(PAGE);
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const out = mkdtempSync(join(tmpdir(), "sl-cp-"));
 await build({ entryPoints: { cap: "src/extractor/capture.ts", settle: "src/extractor/settle.ts" }, outdir: out, bundle: true, format: "esm", platform: "neutral", target: "es2021", logLevel: "silent" });
 const { capturePage } = await import(pathToFileURL(join(out, "cap.js")));
 const { settleAnimations } = await import(pathToFileURL(join(out, "settle.js")));
 const expr = `(async function(){ (${settleAnimations.toString()})(); const r = await (${capturePage.toString()})({}); return JSON.stringify({ html: r.html, stats: r.stats }); })()`;
-const page = readFileSync(PAGE, "utf8");
+const page = REMOTE ? "" : readFileSync(PAGE, "utf8");
 const srv = createServer((q, res) => { res.setHeader("content-type", "text/html"); res.end(page); });
 await new Promise((r) => srv.listen(0, "127.0.0.1", r));
 const prof = mkdtempSync(join(tmpdir(), "sl-cp-p-"));
@@ -33,11 +35,16 @@ try {
   const send = (method, params = {}) => new Promise((r) => { const i = ++id; pend.set(i, r); ws.send(JSON.stringify({ id: i, method, params })); });
   await send("Page.enable");
   await send("Emulation.setDeviceMetricsOverride", { width: 1440, height: 900, deviceScaleFactor: 1, mobile: false });
-  await send("Page.navigate", { url: `http://127.0.0.1:${srv.address().port}/` });
-  await sleep(1500);
-  const r = await send("Runtime.evaluate", { expression: expr, returnByValue: true, awaitPromise: true });
+  await send("Page.navigate", { url: REMOTE ? PAGE : `http://127.0.0.1:${srv.address().port}/` });
+  await sleep(REMOTE ? 9000 : 1500);
+  const r = await send("Runtime.evaluate", { expression: expr, returnByValue: true, awaitPromise: true, timeout: 600000 });
   const v = JSON.parse(r.result.result.value);
   for (const i of IDS.split(",").filter(Boolean)) console.log((new RegExp(`<[a-z]+[^>]* id="${i}"[^>]*>`).exec(v.html) || ["none " + i])[0].slice(0, 300));
+  if (flag("--sel")) {
+    const { JSDOM } = await import("jsdom");
+    const d = new JSDOM(v.html).window.document;
+    for (const el of [...d.querySelectorAll(flag("--sel"))].slice(0, Number(flag("--n") || 6))) console.log(el.outerHTML.replace(/>[\s\S]*$/, ">").slice(0, 400) + " '" + (el.textContent || "").trim().slice(0, 20) + "'");
+  }
   if (args.includes("--css")) for (const m of v.html.matchAll(/<style data-sl-[^>]*>[\s\S]*?<\/style>/g)) console.log(m[0].slice(0, 1200));
   if (flag("--out")) writeFileSync(flag("--out"), v.html);
   console.log(JSON.stringify(v.stats));

@@ -224,6 +224,23 @@ writeFileSync(join(outdir, "pintimed.html"), `<!doctype html><html><head><style>
 writeFileSync(join(outdir, "wheel.html"), `<!doctype html><html><head><style>body{margin:0} .tall{height:1500px} #wh{position:relative;height:700px;perspective:900px} #wh div{position:absolute;left:50%;top:50%;width:145px;height:145px;margin:-72px;background:#8ab;border-radius:20px}</style></head><body>
 <div class="tall"></div><div id="wh">${[0, 1, 2, 3, 4, 5, 6, 7].map((i) => `<div id="wc${i}"></div>`).join("")}</div><div class="tall"></div><div class="tall"></div>
 <script>{ const cs = [...document.querySelectorAll("#wh div")]; let cur = 0; const tick = () => { const target = scrollY * 0.12; cur += (target - cur) * 0.15; if (Math.abs(target - cur) < 0.01) cur = target; cs.forEach((c, i) => { const a = (cur + i * 45) * Math.PI / 180; c.style.transform = "translate3d(" + (Math.sin(a) * 260).toFixed(2) + "px, " + (Math.cos(a) * 40).toFixed(2) + "px, 0) scale(" + (0.8 + 0.2 * Math.cos(a)).toFixed(3) + ") rotateY(" + (Math.sin(a) * -40).toFixed(2) + "deg)"; c.style.zIndex = String(Math.round(500 + Math.cos(a) * 400)); }); requestAnimationFrame(tick); }; requestAnimationFrame(tick); }</script></body></html>`);
+// a heading whose letters a script makes when it comes into view and brings in one after another with Web Animations
+// (element.animate — framer.com's text effects: blurred, lifted, faded; final look written on each at the end):
+// nothing in the DOM changes while they run — replayed with their own frames, length, stagger and easing
+writeFileSync(join(outdir, "waapiletters.html"), `<!doctype html><html><head><style>body{margin:0;font:40px sans-serif} .tall{height:1500px}</style></head><body>
+<div class="tall"></div><div id="wlb"><p id="wlp">Designing calm</p></div><div class="tall"></div><div class="tall"></div>
+<script>{ const p = document.getElementById("wlp"); let done = false; addEventListener("scroll", () => { if (done || p.getBoundingClientRect().top > innerHeight * 0.85) return; done = true; const t = p.textContent; p.textContent = ""; [...t].forEach((ch, i) => { const s = document.createElement("span"); s.id = "wl" + i; s.textContent = ch === " " ? "\u00a0" : ch; s.style.cssText = "display: inline-block;"; p.appendChild(s); const a = s.animate([{ opacity: 0, filter: "blur(8px)", transform: "translateY(10px)" }, { opacity: 1, filter: "blur(0px)", transform: "none" }], { duration: 500, delay: i * 40, easing: "cubic-bezier(.2,.65,.3,.9)", fill: "both" }); a.onfinish = () => { s.style.opacity = "1"; s.style.filter = "blur(0px)"; s.style.transform = "none"; a.cancel(); }; }); }); }</script></body></html>`);
+// a wheel the scroll turns only a quarter round as you pass it, eased (framer.com's ImageWheel): some cards move
+// one way only, some out and back — every card follows the scroll in the copy
+writeFileSync(join(outdir, "wheelq.html"), `<!doctype html><html><head><style>body{margin:0} .tall{height:1500px} #wq{position:relative;height:700px;perspective:900px} #wq div{position:absolute;left:50%;top:50%;width:145px;height:145px;margin:-72px;background:#8ab;border-radius:20px}</style></head><body>
+<div class="tall"></div><div id="wq">${[0, 1, 2, 3, 4, 5, 6, 7].map((i) => `<div id="wq${i}"></div>`).join("")}</div><div class="tall"></div><div class="tall"></div>
+<script>{ const cs = [...document.querySelectorAll("#wq div")]; let cur = 0; const tick = () => { const p = Math.max(0, Math.min(1, (scrollY - 900) / 1300)); const target = p * 90; cur += (target - cur) * 0.06; if (Math.abs(target - cur) < 0.01) cur = target; cs.forEach((c, i) => { const a = (cur - 60 + i * 45) * Math.PI / 180; c.style.transform = "translate3d(" + (Math.sin(a) * 260).toFixed(2) + "px, " + ((1 - Math.cos(a)) * 60).toFixed(2) + "px, 0) scale(" + (0.8 + 0.2 * Math.cos(a)).toFixed(3) + ") rotateY(" + (Math.sin(a) * -40).toFixed(2) + "deg)"; }); requestAnimationFrame(tick); }; requestAnimationFrame(tick); }</script></body></html>`);
+// a local nav (a <div> named like a bar, inside a sticky <nav>) on a page with many sticky tab navs further down
+// (apple.com's galleries): the bar is still watched and its "reveal" class replayed
+writeFileSync(join(outdir, "manynavs.html"), `<!doctype html><html><head><style>body{margin:0;font:16px sans-serif} section{height:700px;position:relative} section nav{position:sticky;top:60px;height:30px} #mn{position:sticky;top:0;z-index:5}</style></head><body>
+<nav id="mn"><div id="mnc" class="localnav-container" style="height:44px">iPhone · Overview · Buy</div></nav>
+${Array.from({ length: 14 }, (_, i) => `<section><nav role="navigation" class="tabnav">tabs ${i}</nav></section>`).join("")}
+<script>addEventListener("scroll", () => document.getElementById("mnc").classList.toggle("reveal", scrollY > 900));</script></body></html>`);
 // a <picture> whose <source> offers a 1x and a 2x file (as apple.com's icons): a high-density screen picks the
 // 2x one; the copy must keep showing it at its 1x size
 {
@@ -754,6 +771,28 @@ for (const variant of ["", "#bundled"]) {
   const cards = [...d.querySelectorAll("#wh > div")];
   const moving = cards.filter((c) => c.hasAttribute("data-sl-scroll"));
   ok(cards.length === 8 && moving.length === 8, `a wheel of cards the scroll turns in depth (eased): every card follows the scroll in the copy (${moving.length}/8; ${cards.map((c) => [...c.attributes].filter((a) => a.name.startsWith("data-sl")).map((a) => a.name).join("+") || "-").join(" ")})`);
+}
+{ const wc = await capture(synthUrl.replace("page.html", "waapiletters.html"), {}, 500).catch((e) => ({ html: "", error: String(e) }));
+  const d = new JSDOM(wc.html || "<html></html>").window.document;
+  const ls = [...d.querySelectorAll("#wlp > span")];
+  const v = (el, k) => (new RegExp(`--sl-in-${k}: ?([^;]+)`).exec(el?.getAttribute("style") || "") || [])[1] || "";
+  const dls = ls.map((l) => parseInt(v(l, "dl")) || 0);
+  const steps = dls.slice(1).map((x, i) => x - dls[i]);
+  ok(ls.length === 14 && ls.every((l) => l.hasAttribute("data-sl-in") && l.getAttribute("data-sl-in-on") === "enter") && ls.every((l) => Math.abs(parseInt(v(l, "d")) - 500) <= 20) && steps.every((x) => x >= 25 && x <= 60) && v(ls[0], "e") === "cubic-bezier(0.2, 0.65, 0.3, 0.9)", `letters a script brings in with Web Animations (made as they come into view) are replayed with their own frames, length, stagger and easing (${ls.filter((l) => l.hasAttribute("data-sl-in")).length}/${ls.length}, ${v(ls[0], "d")}, delays ${dls.slice(0, 5).join("/")}…, ${v(ls[0], "e")}; ${wc.stats?.waapiEntrances || 0} recorded)`);
+  ok(/@keyframes sl-in-g\d+ \{ from \{[^}]*opacity: 0[^}]*blur\(8px\)/.test(wc.html || ""), "…from their own first frame (faded, blurred, lifted)");
+}
+{ const qc = await capture(synthUrl.replace("page.html", "wheelq.html"), {}, 500).catch((e) => ({ html: "", error: String(e) }));
+  const d = new JSDOM(qc.html || "<html></html>").window.document;
+  const cards = [...d.querySelectorAll("#wq > div")];
+  const moving = cards.filter((c) => c.hasAttribute("data-sl-scroll"));
+  ok(cards.length === 8 && moving.length >= 7, `a wheel the scroll turns a quarter round (eased; cards one way only or out and back): the cards follow the scroll in the copy (${moving.length}/8; ${cards.map((c) => [...c.attributes].filter((a) => a.name.startsWith("data-sl")).map((a) => a.name).join("+") || "-").join(" ")})`);
+}
+{ const mc = await capture(synthUrl.replace("page.html", "manynavs.html"), {}, 500).catch((e) => ({ html: "", error: String(e) }));
+  const el = new JSDOM(mc.html || "<html></html>").window.document.querySelector("#mnc");
+  let rules = [];
+  try { rules = JSON.parse(el?.getAttribute("data-sl-scroll-classes") || "[]"); } catch {}
+  const rv = rules.find((r) => r.t === "reveal");
+  ok(!!rv && rv.a > 500 && rv.a < 1300, `a local nav bar on a page with many sticky tab navs further down is still watched — its "reveal" replayed (${JSON.stringify(rules)})`);
 }
 { const pc = await capture(synthUrl.replace("page.html", "picture.html"), {}, 500, null, 2).catch((e) => ({ html: "", error: String(e) }));
   const d = new JSDOM(pc.html || "<html></html>").window.document;

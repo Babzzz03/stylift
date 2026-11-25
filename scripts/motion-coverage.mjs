@@ -145,10 +145,11 @@ async function probeOnce(port, url, tab) {
     const libs = (await t.ev(LIBS)) || [];
     await t.ev(SAMPLER);
     await t.ev(`__mp.sample("idle0")`);
-    await sleep(1500);
-    await t.ev(`__mp.sample("idle")`);
-    await sleep(1200);
-    await t.ev(`__mp.sample("idle")`);
+    // watched a while left alone: an intro that starts late (after a preloader, ~5–8 s) counts on both pages alike
+    for (let i = 0; i < 5; i++) {
+      await sleep(1200);
+      await t.ev(`__mp.sample("idle")`);
+    }
     // scroll with the wheel, like a person; stop at the bottom. The pointer sits at the far left edge: in the
     // middle it would hover whatever scrolls under it (a work list showing posters), counted as scroll motion
     await t.send("Input.dispatchMouseEvent", { type: "mouseMoved", x: 2, y: 450 });

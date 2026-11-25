@@ -127,6 +127,8 @@ export interface CaptureStats {
   revealsPinned?: number;
   /** progress variables (--progress…) the page's scripts set as it scrolled, played back on the scroll timeline */
   scrollVars?: number;
+  /** entrances the page ran as Web Animations (element.animate — Framer Motion's in-view effects), replayed */
+  waapiEntrances?: number;
   /** timed entrances in pinned sections, started at the scroll position where they played */
   pinnedEntrances?: number;
   /** elements the page made during the scroll pass (split text, mounted sections), judged with the rest */
@@ -525,7 +527,8 @@ ${out.join("\n")}
     const timing = (el: HTMLElement, spec: { d?: number; dl?: number; e?: string }) => {
       el.style.setProperty("--sl-in-d", `${Math.max(50, Number(spec.d) || 800)}ms`);
       el.style.setProperty("--sl-in-dl", `${Math.max(0, Math.min(8000, Number(spec.dl) || 0))}ms`);
-      if (spec.e && /^(linear|ease|cubic-bezier\([-\d.,\s]+\))$/.test(spec.e)) el.style.setProperty("--sl-in-e", spec.e);
+      // (a Web Animation's own easing may be a keyword, a curve, or a spring written as linear(…) points)
+      if (spec.e && /^(linear|ease(-in|-out|-in-out)?|cubic-bezier\([-\d.,\s]+\)|linear\([-\d.,%\s]+\))$/.test(spec.e)) el.style.setProperty("--sl-in-e", spec.e);
     };
     root.querySelectorAll("[data-sl-gsap]").forEach((node) => {
       const el = node as HTMLElement;
@@ -1032,7 +1035,7 @@ ${out.join("\n")}
       const chrome = inChrome(el);
       let s0 = seen.get(el);
       const v = visualOf(el);
-      if (scrollPhase === "down" && !chrome && !stickyWatch.has(el) && !switchWatch.has(el) && switchWatch.size < 1500 && el instanceof HTMLElement && !inSticky(el)) {
+      if (scrollPhase === "down" && !chrome && !stickyWatch.has(el) && !switchWatch.has(el) && switchWatch.size < 2000 && el instanceof HTMLElement && !inSticky(el)) {
         switchWatch.add(el);
         const v0 = startVisual.get(el);
         if (v0) switchSamples.set(el, [{ y: startY, tf: v0.transform, op: v0.opacity }, ...(Math.round(scrollY) - stepPx > startY ? [{ y: Math.round(scrollY) - stepPx, tf: v0.transform, op: v0.opacity }] : [])]);
@@ -1275,18 +1278,81 @@ ${out.join("\n")}
     // while the page is still changing or animating on screen (bounded per step).
     // `budget`: how long this stop may take at most (shrinks on long / heavy pages so
     // the pass still reaches the bottom; after the deadline it's a quick trigger pass)
+    // Web Animations the page starts as things come into view (Framer Motion's in-view effects, motion-one, a
+    // script's element.animate()) move things without touching the DOM: the mutation watch never sees them. Each one
+    // is written down while it runs (its first frame, length, delay, easing, when it started, at which stop).
+    // (only those the page starts while we scroll — one that ran at load and holds its value, a digit strip rolled
+    // to its number, is no entrance: its held value is written into the copy as it is)
+    const waapiSeen = new WeakSet<Animation>();
+    const waapiIn = new Map<Element, { kf0: Record<string, string>; d: number; e: string; t0: number; stop: number }>();
+    let waapiFrom = -1; // the page's animation clock when the pass began
+    const startWaapi = () => {
+      try {
+        waapiFrom = Number(document.timeline.currentTime) || 0;
+        for (const a of document.getAnimations()) waapiSeen.add(a); // already there before the pass
+      } catch {
+        waapiFrom = 0;
+      }
+    };
+    let waapiAt = 0;
+    const noteWaapi = (force = false) => {
+      if (scrollPhase !== "down" || waapiIn.size >= 1500) return;
+      // (every 200 ms at most: listing the page's animations makes the browser bring every style up to date)
+      const now = performance.now();
+      if (!force && now - waapiAt < 200) return;
+      waapiAt = now;
+      try {
+        if (waapiFrom < 0) startWaapi();
+        for (const a of document.getAnimations()) {
+          if (waapiSeen.has(a)) continue;
+          waapiSeen.add(a);
+          if (typeof a.startTime === "number" && a.startTime < waapiFrom) continue;
+          // (the site's CSS animations and transitions stay as they are; scroll-linked ones run on their own timeline)
+          if (a instanceof CSSAnimation || a instanceof CSSTransition || (a.timeline && a.timeline !== document.timeline)) continue;
+          const eff = a.effect as KeyframeEffect | null;
+          const el = eff?.target;
+          if (!eff || !el || eff.pseudoElement) continue;
+          const tm = eff.getTiming();
+          const d = Number(tm.duration);
+          if (!isFinite(d) || d < 80 || d > 4000 || (tm.iterations ?? 1) !== 1) continue;
+          const kfs = eff.getKeyframes();
+          if (kfs.length < 2) continue;
+          const k0 = kfs[0] as unknown as Record<string, unknown>;
+          const kf0: Record<string, string> = {};
+          for (const p of ["opacity", "transform", "translate", "scale", "rotate", "filter", "clipPath"]) if (k0[p] != null && k0[p] !== "") kf0[p] = String(k0[p]);
+          if (!Object.keys(kf0).length) continue;
+          const st = typeof a.startTime === "number" ? a.startTime : Number(document.timeline.currentTime) || performance.now();
+          const t0 = st + Math.max(0, Number(tm.delay) || 0);
+          const ease = String(tm.easing && tm.easing !== "linear" ? tm.easing : k0.easing || "linear");
+          const prev = waapiIn.get(el);
+          // (one element, several animations — opacity and transform apart, as Framer Motion runs them: merged)
+          if (prev && prev.stop === stopN) {
+            for (const k in kf0) if (!(k in prev.kf0)) prev.kf0[k] = kf0[k];
+            prev.d = Math.max(prev.d, d);
+            prev.t0 = Math.min(prev.t0, t0);
+            continue;
+          }
+          waapiIn.set(el, { kf0, d, e: ease, t0, stop: stopN });
+        }
+      } catch {
+        /* getAnimations unsupported */
+      }
+    };
     async function settleStep(budget = 810): Promise<void> {
       const first = Math.min(110, budget * 0.4);
       await sleep(first);
       await framesThenIdle(); // the page has seen this position before anything is judged
+      noteWaapi(true);
       const t0 = performance.now();
       const rest = Math.max(0, budget - first);
       const dwell = t0 + Math.min(200, rest * 0.3), end = t0 + Math.min(700, rest);
       while (performance.now() < end) {
         const now = performance.now();
+        noteWaapi();
         if (now >= dwell && now - lastMutation >= 140 && !animatingOnScreen()) break;
         await sleep(60);
       }
+      noteWaapi(true);
     }
     const docH = () => Math.max(document.documentElement.scrollHeight, document.body ? document.body.scrollHeight : 0);
     const deadline = performance.now() + o.maxScrollMs;
@@ -1297,6 +1363,7 @@ ${out.join("\n")}
     if (docH() > innerHeight + 10) {
       let y = 0;
       scrollPhase = "down";
+      startWaapi();
       sampleScrollClasses(Math.round(scrollY));
       if (o.scrollLinked) {
         pickScrubCanvases();
@@ -1679,6 +1746,45 @@ ${out.join("\n")}
       if (d < 60) return null; // an instant switch: nothing to time
       return { f, d: Math.round(Math.min(4000, d)), dl: Math.round(Math.max(0, Math.min(5000, dl))), e: CSS_EASE[e] || (/^cubic-bezier\(/.test(e) ? e : "ease"), tr: "scroll", m: "transition" };
     };
+    // Entrances run as Web Animations (noteWaapi): replayed from their own first frame, with their own length, easing
+    // and stagger (when each started after the first of its block at that stop) — when they come into view, or in a
+    // pinned section at the scroll position where they played. Only what ended shown; hover / loop frames start
+    // where the element is and are no entrance.
+    const waapiDone = new Set<Element>();
+    {
+      const blockOf = (el: Element) => el.parentElement?.parentElement?.parentElement || el.parentElement || el;
+      const blockIds = new Map<Element, number>();
+      const seqOf = (b: Element) => {
+        let n = blockIds.get(b);
+        if (n === undefined) blockIds.set(b, (n = blockIds.size));
+        return n;
+      };
+      const first = new Map<string, number>();
+      for (const [el, w] of waapiIn) {
+        const k = `${w.stop}|${seqOf(blockOf(el))}`;
+        first.set(k, Math.min(first.get(k) ?? Infinity, w.t0));
+      }
+      for (const [el, w] of waapiIn) {
+        if (!(el instanceof HTMLElement) || !el.isConnected || timerTouched.has(el) || slideBlock.has(el) || inChrome(el)) continue;
+        if (el.hasAttribute("data-sl-gsap") || el.hasAttribute("data-sl-in") || el.hasAttribute("data-framer-appear-id")) continue;
+        const cs = getComputedStyle(el);
+        if (parseFloat(cs.opacity) < 0.5 || cs.visibility === "hidden" || getComputedStyle(el).position === "fixed") continue;
+        const k = w.kf0;
+        const f = { o: k.opacity ?? cs.opacity, t: k.transform ?? "none", tr: k.translate ?? "none", s: k.scale ?? "none", r: k.rotate ?? "none", fi: k.filter ?? "none", c: k.clipPath ?? "none" };
+        const moved = (v: string, rest: string) => v !== "none" && v !== rest && !/^(translate([XYZ]|3d)?\(0(px)?(, ?0(px)?){0,2}\)|scale[XY]?\(1\)|rotate[XYZ]?\(0(deg)?\)|blur\(0(px)?\)|0px|0px 0px|1|inset\(0(px|%)?\))$/.test(v);
+        if (!(parseFloat(f.o) < parseFloat(cs.opacity) - 0.1 || moved(f.t, cs.transform) || moved(f.tr, cs.translate) || moved(f.s, cs.scale) || moved(f.r, cs.rotate) || moved(f.fi, cs.filter) || moved(f.c, cs.clipPath))) continue;
+        const dl = Math.round(Math.max(0, Math.min(3000, w.t0 - (first.get(`${w.stop}|${seqOf(blockOf(el))}`) ?? w.t0))));
+        const e = /^(linear|ease(-in|-out|-in-out)?|cubic-bezier\([-\d.,\s]+\)|linear\([-\d.,%\s]+\))$/.test(w.e) ? w.e : "ease";
+        el.setAttribute("data-sl-gsap", JSON.stringify({ f, d: Math.round(w.d), dl, e, tr: "scroll", m: "waapi" }));
+        if (inSticky(el)) {
+          const yAt = stopYs.get(w.stop), yBefore = stopYs.get(w.stop - 1) ?? startY;
+          if (yAt !== undefined) el.setAttribute(IN_AT_ATTR, String(Math.round((Math.min(yBefore, yAt) + yAt) / 2)));
+        }
+        waapiDone.add(el);
+        decided.add(el);
+        stats.waapiEntrances = (stats.waapiEntrances || 0) + 1;
+      }
+    }
     // a row's children in a pinned section: at how many different stops they came in (half way to their end look)
     const rowSpreadOf = new Map<Element, number>();
     const rowSpread = (row: Element): number => {
@@ -1698,7 +1804,7 @@ ${out.join("\n")}
     };
     for (const { el, cls, style } of liveSnapshot) {
       try {
-        if (!el.isConnected) continue;
+        if (!el.isConnected || waapiDone.has(el)) continue;
         const changed = el.getAttribute("class") !== cls || el.getAttribute("style") !== style;
         // a pinned section is held by its own scroll timeline: never a reveal or parallax layer; back to
         // how it looked before the page pinned it
@@ -1817,7 +1923,13 @@ ${out.join("\n")}
             return false;
           };
           const r = el.getBoundingClientRect();
-          if (tys.every((m) => m.length === 6) && (offOnScreen(pts.map((p) => p.op), 0.3) || offOnScreen(tys.map((m) => m[5]), 12) || offOnScreen(tys.map((m) => m[4]), 12)) && r.width >= 20 && r.height >= 10) {
+          // …or one showing all along that glides with the scroll stop after stop and never comes to rest (a wheel's
+          // cards turning a quarter round as you scroll past, eased so each settles late — some only one way): moved
+          // at three stops or more, eased by the scroll, not a timer's doing (a slide-in comes to rest: a reveal)
+          let moves = 0;
+          for (let i = 1; i < tys.length; i++) if (tys[i].length === 6 && tys[i - 1].length === 6 && (Math.abs(tys[i][4] - tys[i - 1][4]) > 4 || Math.abs(tys[i][5] - tys[i - 1][5]) > 4 || Math.abs(tys[i][0] - tys[i - 1][0]) > 0.02)) moves++;
+          const glides = moves >= 3 && pts.every((p) => p.op >= 0.5) && !restingTf(pts[pts.length - 1].tf) && easedScrub(el);
+          if (tys.every((m) => m.length === 6) && (offOnScreen(pts.map((p) => p.op), 0.3) || offOnScreen(tys.map((m) => m[5]), 12) || offOnScreen(tys.map((m) => m[4]), 12) || glides) && r.width >= 20 && r.height >= 10) {
             if (cls === null) el.removeAttribute("class"); else el.setAttribute("class", cls);
             if (style === null) el.removeAttribute("style"); else el.setAttribute("style", style);
             const id = `s${linked.length + 1}`;
@@ -3071,20 +3183,28 @@ ${out.join("\n")}
         clsTargets = [document.documentElement, document.body];
         // (the classes may sit on the bar or on a box inside or around it — apple.com's sticky nav#localnav never
         // changes, the div#localnav-container inside it gets "sticky" and "reveal": each is watched on its own)
+        // (each kind has its own budget: a page with many sticky strips further down — apple.com's galleries' tab
+        // navs — must not use up the places before its bar <div>s are looked at)
+        let navs = 0;
         for (const b of Array.from(document.querySelectorAll('header, nav, [role="banner"], [role="navigation"]'))) {
-          if (clsTargets.length >= 12) break;
+          if (navs >= 16) break;
           const pos = getComputedStyle(b).position;
-          if (pos === "fixed" || pos === "sticky") clsTargets.push(b);
+          if (pos === "fixed" || pos === "sticky") {
+            clsTargets.push(b);
+            navs++;
+          }
         }
         // …and a bar that is a plain <div> named like one (apple.com's "localnav-container"), at the top of the page
         const BAR = /(^|[-_\s])((local|sub|top|main|site|page|global)?-?nav(bar|igation)?|header|topbar|toolbar|menubar|navbar)([-_\s]|$)/i;
+        let bars = 0;
         for (const b of Array.from(document.querySelectorAll("body div[id], body div[class]")).slice(0, 4000)) {
-          if (clsTargets.length >= 12) break;
+          if (bars >= 8) break;
           if (!BAR.test(`${b.id} ${typeof b.className === "string" ? b.className : ""}`) || clsTargets.includes(b)) continue;
           // (its box may hold the bar's own hidden menu too — apple.com's is 557 px tall with it)
           const r = b.getBoundingClientRect();
           if (r.top + scrollY > 200 || r.height > innerHeight * 0.8) continue;
           clsTargets.push(b);
+          bars++;
         }
       }
       if (scrollCls.length > 400) return;
