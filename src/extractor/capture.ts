@@ -117,6 +117,8 @@ export interface CaptureStats {
   widgets?: number;
   /** classes the page puts on itself / its bars past a scroll position (a bar appearing, a header turning solid) */
   scrollClasses?: number;
+  /** how long the copy waited for slideshows on a timer to stand still between two turns */
+  slidesSettledMs?: number;
   /** content inside a frozen slideshow shown in place (it was faded / swept aside only because we went back up) */
   slideContentShown?: number;
   /** the class flips that made something a slideshow on a timer (element, how many inside, its classes in turn) */
@@ -696,6 +698,9 @@ ${out.join("\n")}
   // slide titles' letters inside a slideshow on a timer (→ their style seen in place, or null): put in place, in the
   // slide that shows, right before the copy (wearebulletproof.com: OREO.COM's letters had been swept 21vw apart)
   const slideTitles = new Map<Element, string | null>();
+  // what changed by itself with the page at rest (slides taking turns on a timer): handed to the copy, which waits for
+  // a moment between two turns (settleSlides)
+  let slideRoots: Element[] = [];
   // identical starting states share one @keyframes (text effects reveal hundreds of
   // letters that all start the same way)
   const revealKinds = new Map<string, string>(); // from-declarations → id
@@ -1654,6 +1659,7 @@ ${out.join("\n")}
       extending = false;
       for (const el of extendedRoots) if (stillRoots.size < 2000) stillRoots.add(el);
     }
+    const turnSlides: Element[] = []; // slides taking turns (sets, and items whose class came back): the copy waits for a quiet moment among them
     for (const [el, h] of clsHist) {
       // came back to an earlier class (A → B → A), at a moment nothing was scrolling it
       if (!h.late || h.vals.length < 3 || !h.vals.some((v, i) => h.vals.indexOf(v) < i - 1)) continue;
@@ -1662,6 +1668,7 @@ ${out.join("\n")}
       const kids = el.getElementsByTagName("*");
       for (let i = 0; i < kids.length && i < 600; i++) timerTouched.add(kids[i]);
       stats.timerSlides = (stats.timerSlides || 0) + 1;
+      if (turnSlides.length < 300) turnSlides.push(el);
       // (which, and how its class went — for a look when content ends up frozen)
       if ((stats.timerSlideWhy || "").length < 900) stats.timerSlideWhy = (stats.timerSlideWhy ? stats.timerSlideWhy + " | " : "") + `${el.localName}.${(el.getAttribute("class") || "").trim().split(/\s+/).slice(0, 2).join(".")} (${kids.length} inside): ${h.vals.slice(0, 4).map((v) => v.replace(/\s+/g, ".")).join(" → ")}`;
       stillRoots.add(el);
@@ -1695,6 +1702,7 @@ ${out.join("\n")}
           let block: Element = p;
           for (let b = p.parentElement; b && b !== document.body && b.getBoundingClientRect().height <= innerHeight * 1.5; b = b.parentElement) block = b;
           blocks.add(block);
+          for (const x of sibs) if (turnSlides.length < 300 && !turnSlides.includes(x)) turnSlides.push(x); // the slides themselves
           break;
         }
       }
@@ -1710,6 +1718,7 @@ ${out.join("\n")}
       }
     }
     timerDriven = timerTouched.size > 0;
+    slideRoots = turnSlides.slice(0, 300);
     revealObserver.disconnect();
     playerObserver.disconnect();
     countObserver.disconnect();
@@ -4208,6 +4217,29 @@ ${out.join("\n")}
       if (!el.isConnected || el.childElementCount > 0) continue;
       const now = parseFloat((el.textContent || "").replace(/[^\d.]/g, "")) || 0;
       if (peak.value > 0 && now < peak.value) el.setAttribute(COUNT_ATTR, String(Array.from(countPeak.keys()).indexOf(el)));
+    }
+    // A slideshow on a timer is copied between two turns, not in the middle of one (every slide hidden for a moment,
+    // two half faded in): wait — a turn at most — until its slides have stood still a moment, nothing running on them
+    if (slideRoots.length) {
+      const roots = slideRoots.filter((e) => e.isConnected);
+      // (what a turn changes — its class, shown / hidden, faded — not the position a ticker moves on every frame)
+      const sig = () => roots.map((e) => { const c = getComputedStyle(e); return `${e.getAttribute("class") || ""}|${c.display}|${c.visibility}|${Math.round(parseFloat(c.opacity) * 10)}`; }).join("\n");
+      const busy = () => {
+        try {
+          return roots.some((e) => e.getAnimations().some((a) => a.playState === "running" && Number(a.effect?.getComputedTiming().endTime) < 4000));
+        } catch {
+          return false;
+        }
+      };
+      const t0s = performance.now();
+      let last = sig(), since = performance.now();
+      while (performance.now() - t0s < 6000) {
+        await sleep(100);
+        const now = sig();
+        if (now !== last) { last = now; since = performance.now(); continue; }
+        if (performance.now() - since >= 600 && !busy()) break;
+      }
+      stats.slidesSettledMs = Math.round(performance.now() - t0s);
     }
     // the scroll pass's decisions win over re-renders that happened since
     for (const [el, d] of decidedState) {

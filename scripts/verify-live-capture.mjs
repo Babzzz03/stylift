@@ -261,6 +261,11 @@ writeFileSync(join(outdir, "pinvar.html"), `<!doctype html><html><head><style>bo
 writeFileSync(join(outdir, "slidetitles.html"), `<!doctype html><html><head><style>body{margin:0;font:90px sans-serif;overflow-x:hidden} .tall{height:1400px} #sl{position:relative;height:500px} .sld{position:absolute;inset:0;display:none} .sld.active{display:block} .ch{display:inline-block;transform:translateX(var(--x));transition:transform .5s}</style></head><body>
 <div class="tall"></div><div id="sl">${["OREO", "TATE", "DONJ"].map((t, k) => `<div class="sld${k === 0 ? " active" : ""}" id="sld${k}"><p style="margin:0">${[...t].map((ch, i) => `<span class="ch" id="st${k}${i}" style="--x: ${i % 2 ? "" : "-"}21vw;">${ch}</span>`).join("")}</p></div>`).join("")}</div><div class="tall"></div><div class="tall"></div>
 <script>{ const sl = document.getElementById("sl"), ss = [...document.querySelectorAll(".sld")]; let k = 0, inView = false; const put = () => ss.forEach((s, j) => s.querySelectorAll(".ch").forEach((c, i) => c.style.setProperty("--x", inView && j === k ? "0vw" : (i % 2 ? "" : "-") + "21vw"))); setInterval(() => { ss[k].classList.remove("active"); k = (k + 1) % ss.length; ss[k].classList.add("active"); put(); }, 1300); addEventListener("scroll", () => { const r = sl.getBoundingClientRect(); const v = r.top < innerHeight * 0.8 && r.bottom > 0; if (v !== inView) { inView = v; put(); } }); }</script></body></html>`);
+// a slider on a timer that hides every slide for half a second at each turn before showing the next
+// (wearebulletproof.com's works slider): the copy is taken between turns — one slide showing, never none
+writeFileSync(join(outdir, "slidegap.html"), `<!doctype html><html><head><style>body{margin:0;font:40px sans-serif} .tall{height:1400px} #sg{position:relative;height:400px} .gs{position:absolute;inset:0}</style></head><body>
+<div id="sg">${[0, 1, 2].map((k) => `<div class="gs" id="gs${k}" style="display: ${k === 0 ? "block" : "none"};">Work ${k}</div>`).join("")}</div><div class="tall"></div><div class="tall"></div>
+<script>{ const ss = [...document.querySelectorAll(".gs")]; let k = 0; setInterval(() => { ss.forEach((s) => (s.style.display = "none")); k = (k + 1) % ss.length; setTimeout(() => (ss[k].style.display = "block"), 500); }, 1500); }</script></body></html>`);
 // a <picture> whose <source> offers a 1x and a 2x file (as apple.com's icons): a high-density screen picks the
 // 2x one; the copy must keep showing it at its 1x size
 {
@@ -832,6 +837,14 @@ for (const variant of ["", "#bundled"]) {
   // in place: its variable at 0, or its sweep taken off (transform: none)
   const xs = act.length === 1 ? [...d.querySelectorAll(`#sld${act[0]} .ch`)].map((c) => { const st = c.getAttribute("style") || ""; return /transform:\s*none/.test(st) ? "none" : (/--x: ?([^;]+)/.exec(st) || [])[1] || "?"; }) : [];
   ok(act.length === 1 && xs.length === 4 && xs.every((x) => x === "none" || /^0(vw|px)?$/.test(x)), `a slider on a timer is frozen on one slide whose title (letters slid in only while on screen) shows in place (slide ${act.join(",") || "none"}, letters ${xs.join(" ") || "-"})`);
+}
+{ const shown = [];
+  for (let run = 0; run < 3; run++) {
+    const gc = await capture(synthUrl.replace("page.html", "slidegap.html"), {}, 500).catch((e) => ({ html: "", error: String(e) }));
+    const d = new JSDOM(gc.html || "<html></html>").window.document;
+    shown.push([0, 1, 2].filter((k) => /display:\s*block/.test(d.querySelector(`#gs${k}`)?.getAttribute("style") || "")).length);
+  }
+  ok(shown.every((n) => n === 1), `a slider that hides every slide for a moment at each turn is copied between turns: one slide showing, three captures out of three (${shown.join(", ")})`);
 }
 { const pc = await capture(synthUrl.replace("page.html", "picture.html"), {}, 500, null, 2).catch((e) => ({ html: "", error: String(e) }));
   const d = new JSDOM(pc.html || "<html></html>").window.document;
