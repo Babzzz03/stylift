@@ -1,7 +1,7 @@
 // Network + download helpers shared by the side panel and the studio. Both are
 // extension pages, so fetch() runs with the extension's host permissions and can
 // read cross-origin assets the page itself could not.
-import { zipSync, strToU8 } from "./zip";
+import { zipParts, strToU8 } from "./zip";
 import type { FileMap } from "./project";
 
 export async function fetchText(url: string): Promise<string | null> {
@@ -107,6 +107,6 @@ export function downloadBlob(data: BlobPart, name: string, mime: string): void {
 }
 export function downloadZip(files: FileMap, name: string): number {
   const entries = Object.entries(files).map(([n, data]) => ({ name: n, data: typeof data === "string" ? strToU8(data) : data }));
-  downloadBlob(zipSync(entries) as BlobPart, name, "application/zip");
+  saveBlob(new Blob(zipParts(entries) as BlobPart[], { type: "application/zip" }), name);
   return entries.length;
 }

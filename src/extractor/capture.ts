@@ -117,6 +117,14 @@ export interface CaptureStats {
   widgets?: number;
   /** classes the page puts on itself / its bars past a scroll position (a bar appearing, a header turning solid) */
   scrollClasses?: number;
+  /** the page's scroll position at the moment the copy was taken (0 unless something held it elsewhere) */
+  copiedAtY?: number;
+  /** shown at the top of the page and leaving as you scroll down (a hero headline fading away), on the scroll */
+  topExits?: number;
+  /** big canvases painting a hidden film: the film plays in their place in the copy */
+  canvasVideos?: number;
+  /** elements of a layer fixed to the screen following the scroll (a shade darkening, a picture zooming) */
+  fixedLayerLinks?: number;
   /** how long the copy waited for slideshows on a timer to stand still between two turns */
   slidesSettledMs?: number;
   /** content inside a frozen slideshow shown in place (it was faded / swept aside only because we went back up) */
@@ -888,11 +896,15 @@ ${out.join("\n")}
     } catch {
       /* no recorder on this page */
     }
+    recordFeedsEarly();
     // the page lays itself out again for its window (sizes measured, sliders fitted) — and a page that rebuilds on
     // resize (wearebulletproof.com splits its texts into letters again) does it now, before the snapshot, not
     // after the scroll pass where it would swap out every letter the pass watched
     dispatchEvent(new UIEvent("resize"));
-    await sleep(300);
+    // (until it has settled again: a scroll library recalculates every effect on resize — busybox.io's hero lines
+    // came back from it a moment later — the snapshot must not catch them on the way)
+    await sleep(200);
+    await waitQuiet(2000);
     const sx = scrollX, sy = scrollY;
     // Pinned bars at the top (headers / navs) often swap to a compact "scrolled"
     // version, rebuilding their content. Keep their at-the-top content.
@@ -976,13 +988,28 @@ ${out.join("\n")}
       for (const a of chain) stickyOf.set(a, hit);
       return hit;
     };
+    // inside a layer fixed to the screen (a hero stage held behind the page while it scrolls over it)
+    const fixedOf = new Map<Element, boolean>();
+    const inFixedLayer = (el: Element): boolean => {
+      const chain: Element[] = [];
+      let hit = false;
+      for (let a: Element | null = el; a && a !== document.body && a !== document.documentElement; a = a.parentElement) {
+        const known = fixedOf.get(a);
+        if (known !== undefined) { hit = known; break; }
+        chain.push(a);
+        if (getComputedStyle(a).position === "fixed") { hit = true; break; }
+      }
+      for (const a of chain) fixedOf.set(a, hit);
+      return hit;
+    };
     const stickyWatch = new Set<Element>();
     const stickySamples = new Map<Element, { y: number; tf: string; op: number }[]>();
     // Content that switches as you scroll anywhere else (the active item of a list lighting up, posters /
     // captions taking turns): anything that changed while scrolling has its SETTLED look sampled at every stop
     // from then on; one that turns on and off again is replayed on the scroll position.
     const switchWatch = new Set<Element>();
-    const switchSamples = new Map<Element, { y: number; tf: string; op: number }[]>();
+    // (each with where it was on screen then: inside a pinned section the page holds it in place as we scroll on)
+    const switchSamples = new Map<Element, { y: number; tf: string; op: number; top?: number }[]>();
     // Timed reveals: how an element moved at the stop where it came in — when its first frame changed (after
     // the earliest change anything made at that stop: the trigger), how long until its last, and the shape of
     // the curve. The copy replays the reveal over that time, with that delay (the stagger of letters / words /
@@ -1543,7 +1570,7 @@ ${out.join("\n")}
           const v = visualOf(el);
           const arr = switchSamples.get(el) || [];
           const last = arr[arr.length - 1];
-          if (!last || last.y !== yy) arr.push({ y: yy, tf: v.transform, op: v.opacity });
+          if (!last || last.y !== yy) arr.push({ y: yy, tf: v.transform, op: v.opacity, top: el.getBoundingClientRect().top });
           switchSamples.set(el, arr);
         }
       }
@@ -1985,7 +2012,13 @@ ${out.join("\n")}
           const pts = Array.from(new Map(warr.map((p) => [p.y, p])).values()).sort((a, b) => a.y - b.y);
           const tys = pts.map((p) => matrixNums(p.tf));
           const top = docTop(el), hgt = el.getBoundingClientRect().height;
-          const onScreen = (y: number) => top - y < innerHeight && top - y + hgt > 0; // any of it showing
+          // any of it showing — where it really was at that stop when known (a pinned section holds it in place while
+          // the page scrolls on: busybox.io's process steps), else where it sits in the page now
+          const onScreen = (y: number) => {
+            const at = pts.find((p) => p.y === y)?.top;
+            const t = typeof at === "number" && isFinite(at) ? at : top - y;
+            return t < innerHeight && t + hgt > 0;
+          };
           // a value that went one way and then back the other, the way back happening on screen
           const offOnScreen = (vals: number[], tol: number) => {
             let up = false, down = false;
@@ -1996,6 +2029,19 @@ ${out.join("\n")}
             }
             return false;
           };
+          // …or one changing just one way while HELD in place on screen (the same spot at the stop before and at this
+          // one, as the page scrolls on: a pinned section's first step going off, its last coming on — busybox.io). A
+          // reveal as it comes into view moves up the screen between stops: not this.
+          // (held: on screen far from where the page would have put it by now — displaced by a quarter of a screen
+          // or more from its own place in the page, scrolled on by that much)
+          const heldChange = (vals: number[], tol: number) => {
+            for (let i = 1; i < vals.length; i++) {
+              if (Math.abs(vals[i] - vals[i - 1]) <= tol) continue;
+              const at = pts[i].top;
+              if (typeof at === "number" && isFinite(at) && Math.abs(at - (top - pts[i].y)) > innerHeight * 0.25 && onScreen(pts[i].y)) return true;
+            }
+            return false;
+          };
           const r = el.getBoundingClientRect();
           // …or one showing all along that glides with the scroll stop after stop and never comes to rest (a wheel's
           // cards turning a quarter round as you scroll past, eased so each settles late — some only one way): moved
@@ -2003,7 +2049,7 @@ ${out.join("\n")}
           let moves = 0;
           for (let i = 1; i < tys.length; i++) if (tys[i].length === 6 && tys[i - 1].length === 6 && (Math.abs(tys[i][4] - tys[i - 1][4]) > 4 || Math.abs(tys[i][5] - tys[i - 1][5]) > 4 || Math.abs(tys[i][0] - tys[i - 1][0]) > 0.02)) moves++;
           const glides = moves >= 3 && pts.every((p) => p.op >= 0.5) && !restingTf(pts[pts.length - 1].tf) && easedScrub(el);
-          if (tys.every((m) => m.length === 6) && (offOnScreen(pts.map((p) => p.op), 0.3) || offOnScreen(tys.map((m) => m[5]), 12) || offOnScreen(tys.map((m) => m[4]), 12) || glides) && ((r.width >= 20 && r.height >= 10) || (ofRow && r.width >= 4 && r.height >= 4))) {
+          if (tys.every((m) => m.length === 6) && (offOnScreen(pts.map((p) => p.op), 0.3) || offOnScreen(tys.map((m) => m[5]), 12) || offOnScreen(tys.map((m) => m[4]), 12) || heldChange(pts.map((p) => p.op), 0.3) || heldChange(tys.map((m) => m[5]), 12) || glides) && ((r.width >= 20 && r.height >= 10) || (ofRow && r.width >= 4 && r.height >= 4))) {
             if (cls === null) el.removeAttribute("class"); else el.setAttribute("class", cls);
             if (style === null) el.removeAttribute("style"); else el.setAttribute("style", style);
             const id = `s${linked.length + 1}`;
@@ -2014,7 +2060,67 @@ ${out.join("\n")}
             continue;
           }
         }
-        const isReveal = !!s0 && !pinned && !timerTouched.has(el) && !slideBlock.has(el) && s0.best >= s0.preScore + 0.3 && s0.at.opacity > 0.5;
+        // Shown at the top of the page and leaving as you scroll down (a hero's headline fading and rising away — eased
+        // by a scroll library, so several values per stop): its look at the top is the truth, then the scroll takes it
+        // away — replayed on the scroll position from its settled look at each stop (never its "best" look at rest:
+        // busybox.io's headline sat 36 px lower). In the first screen and gone within two screens of scrolling.
+        {
+          const ex = (warr && warr.length >= 3 ? warr : null) || samples.get(el);
+          if (ex && ex.length >= 3 && el instanceof HTMLElement && linked.length < 250 && !timerTouched.has(el) && !inChrome(el) && !inFixedLayer(el) && !varHosts.has(el)) {
+            const pts = Array.from(new Map(ex.map((p) => [p.y, p])).values()).sort((a, b) => a.y - b.y);
+            const ops = pts.map((p) => p.op);
+            const firstY = pts[0].y, at0 = docTop(el);
+            const goneAt = pts.find((p) => p.op <= 0.1)?.y;
+            let falling = true;
+            for (let i = 1; i < ops.length; i++) if (ops[i] > ops[i - 1] + 0.05) falling = false;
+            if (firstY <= startY + 10 && ops[0] >= 0.5 && at0 < innerHeight && goneAt !== undefined && goneAt - firstY <= innerHeight * 2 && falling && ops.some((o) => o > 0.15 && o < 0.85)) {
+              if (cls === null) el.removeAttribute("class"); else el.setAttribute("class", cls);
+              if (style === null) el.removeAttribute("style"); else el.setAttribute("style", style);
+              const id = `s${linked.length + 1}`;
+              el.setAttribute(SCROLL_ATTR, id);
+              linked.push({ el, id, pts: pts.filter((p) => p.y <= goneAt + innerHeight), preStyle: style });
+              stats.topExits = (stats.topExits || 0) + 1;
+              dbg(el, `shown at the top, leaving as you scroll (${pts.length} samples)`);
+              continue;
+            }
+          }
+        }
+        // In a layer fixed to the screen — a dark shade over the hero rising as you scroll down, its picture zooming
+        // (busybox.io): it belongs to the screen, not to a spot on the page. Changing steadily with the scroll: replayed on
+        // the scroll position, from how it looks at the top. Never a reveal (its most shown look would stay all along).
+        const fixedLayer = el instanceof HTMLElement && !inChrome(el) && inFixedLayer(el);
+        // (one moved by a progress variable its script sets — a bar sliding in by --progress — has the variable itself
+        // replayed: exact, and everything else the CSS draws from it follows)
+        if (fixedLayer && warr && warr.length >= 3 && !timerTouched.has(el) && !varHosts.has(el as HTMLElement) && linked.length < 250) {
+          const pts = Array.from(new Map(warr.map((p) => [p.y, p])).values()).sort((a, b) => a.y - b.y);
+          const series = pts.map((p) => { const m = matrixNums(p.tf); return m.length === 6 ? [p.op, m[0], m[4], m[5]] : null; });
+          if (series.every((v) => v)) {
+            const tol = [0.02, 0.005, 2, 2];
+            let steady = true, moved = false;
+            for (let c = 0; c < 4; c++) {
+              const vals = series.map((v) => v![c]);
+              let up = false, down = false;
+              for (let i = 1; i < vals.length; i++) { const d = vals[i] - vals[i - 1]; if (d > tol[c]) up = true; if (d < -tol[c]) down = true; }
+              if (up && down) steady = false;
+              const range = Math.max(...vals) - Math.min(...vals);
+              if ((c === 0 && range >= 0.15) || (c === 1 && range >= 0.02) || (c >= 2 && range >= 8)) moved = true;
+            }
+            const distinct = new Set(series.map((v) => v!.map((x) => x.toFixed(2)).join(","))).size;
+            // (two looks are enough here: a shade switched on past a point of the page — a fixed layer's look is
+            // the screen's, and only the scroll position moves it)
+            if (steady && moved && distinct >= 2) {
+              if (cls === null) el.removeAttribute("class"); else el.setAttribute("class", cls);
+              if (style === null) el.removeAttribute("style"); else el.setAttribute("style", style);
+              const id = `s${linked.length + 1}`;
+              el.setAttribute(SCROLL_ATTR, id);
+              linked.push({ el, id, pts, preStyle: style });
+              stats.fixedLayerLinks = (stats.fixedLayerLinks || 0) + 1;
+              dbg(el, `in a fixed layer, following the scroll (${pts.length} samples)`);
+              continue;
+            }
+          }
+        }
+        const isReveal = !!s0 && !pinned && !fixedLayer && !timerTouched.has(el) && !slideBlock.has(el) && s0.best >= s0.preScore + 0.3 && s0.at.opacity > 0.5;
         // came in with its OWN CSS animation running now (a gradient swiping across a headline, set off by a class
         // added as it came in): kept as it is — that class, that animation; ours would replace it. Held until it
         // comes into view instead (markHeldAnimations), shown when it ends.
@@ -2028,7 +2134,7 @@ ${out.join("\n")}
           if (s0.style === null) el.removeAttribute("style"); else el.setAttribute("style", s0.style);
           decided.add(el);
           revealShown.set(el, s0.at.opacity); // it came in: it must end shown (checked once everything is decided)
-          dbg(el, `a reveal (best ${s0.best.toFixed(2)} vs before ${s0.preScore.toFixed(2)})`);
+          dbg(el, `a reveal (best ${s0.best.toFixed(2)} vs before ${s0.preScore.toFixed(2)}; y/top/op ${(switchSamples.get(el) || []).map((p) => `${p.y}/${typeof p.top === "number" ? Math.round(p.top) : "-"}/${p.op.toFixed(2)}`).join(" ")})`);
           // revealed by its section's class: keep that class in the copy
           const anc = viaAncestor.get(el);
           if (anc && s0.ancCls !== undefined && !decided.has(anc)) {
@@ -2212,7 +2318,7 @@ ${out.join("\n")}
           continue;
         }
         if (!changed) { dbg(el, `unchanged (samples ${samples.get(el)?.length || 0}, seen ${seen.has(el)}, ${inSnapshot.has(el) ? "in the snapshot" : lateBorn.has(el) ? "made during the pass" : "made after"})`); continue; }
-        dbg(el, `put back as it was (samples ${samples.get(el)?.length || 0}, switch ${switchSamples.get(el)?.length || 0}, sticky ${stickySamples.get(el)?.length || 0}, best ${seen.get(el)?.best?.toFixed(2)} vs before ${seen.get(el)?.preScore?.toFixed(2)}; ${inSnapshot.has(el) ? "in the snapshot" : lateBorn.has(el) ? "made during the pass" : "made after"}, start look ${preVisual.has(el) ? "recorded" : "not recorded"} ${seen.get(el)?.pre?.transform}; switch x ${(switchSamples.get(el) || []).map((p) => Math.round(matrixNums(p.tf)[4] ?? 0)).join(",")})`);
+        dbg(el, `put back as it was (samples ${samples.get(el)?.length || 0}, switch ${switchSamples.get(el)?.length || 0}, sticky ${stickySamples.get(el)?.length || 0}, best ${seen.get(el)?.best?.toFixed(2)} vs before ${seen.get(el)?.preScore?.toFixed(2)}; ${inSnapshot.has(el) ? "in the snapshot" : lateBorn.has(el) ? "made during the pass" : "made after"}, start look ${preVisual.has(el) ? "recorded" : "not recorded"} ${seen.get(el)?.pre?.transform}; switch x ${(switchSamples.get(el) || []).map((p) => Math.round(matrixNums(p.tf)[4] ?? 0)).join(",")}; y/top/op ${(switchSamples.get(el) || []).map((p) => `${p.y}/${typeof p.top === "number" ? Math.round(p.top) : "-"}/${p.op.toFixed(2)}`).join(" ")})`);
         if (cls === null) { if (el.hasAttribute("class")) el.removeAttribute("class"); }
         else if (el.getAttribute("class") !== cls) el.setAttribute("class", cls);
         // custom properties still different back at the top aren't scroll state: a size the page measured
@@ -2760,15 +2866,28 @@ ${out.join("\n")}
     return [...recovered, ...parts].join(" ");
   }
   const EMPTY_DECL = /[\w-]:\s*;/;
+  // A background clipped to the text (gradient headings: `background: …, <color>; background-clip: text`) is folded by
+  // the browser into the `background` shorthand, which can't say it for the last layer — the colour's: it comes back
+  // as border-box and the colour fills the whole box (busybox.io's heading under a pale block). The clip is written
+  // out as it is, after the shorthand.
+  const clipFix = (style: CSSStyleDeclaration | undefined): string => {
+    if (!style) return "";
+    const v = style.getPropertyValue("background-clip") || style.getPropertyValue("-webkit-background-clip");
+    if (!v || !/\btext\b/.test(v)) return "";
+    const imp = style.getPropertyPriority("background-clip") || style.getPropertyPriority("-webkit-background-clip") ? " !important" : "";
+    return `-webkit-background-clip: ${v}${imp}; background-clip: ${v}${imp};`;
+  };
   function ruleText(rule: CSSRule, src?: string): string {
-    const text = rule.cssText;
+    const text0 = rule.cssText;
+    const fix = clipFix((rule as CSSRule & { style?: CSSStyleDeclaration }).style);
+    const text = fix && !(rule as CSSRule & { cssRules?: CSSRuleList }).cssRules?.length && text0.endsWith("}") ? `${text0.slice(0, -1).trimEnd()} ${fix} }` : text0;
     if (!EMPTY_DECL.test(text)) return text; // fast path: nothing to repair
     const anyRule = rule as CSSRule & { style?: CSSStyleDeclaration; cssRules?: CSSRuleList; selectorText?: string };
     try {
       const kids = anyRule.cssRules ? Array.from(anyRule.cssRules).map((r) => ruleText(r, src)).join(" ") : "";
       if (anyRule.style) {
         const head = text.slice(0, text.indexOf("{")).trim();
-        return `${head} { ${declText(anyRule.style, src, anyRule.selectorText)}${kids ? " " + kids : ""} }`;
+        return `${head} { ${declText(anyRule.style, src, anyRule.selectorText)}${fix ? " " + fix : ""}${kids ? " " + kids : ""} }`;
       }
       if (anyRule.cssRules) {
         const head = text.slice(0, text.indexOf("{")).trim();
@@ -3024,7 +3143,20 @@ ${out.join("\n")}
                 stats.islands = islandN;
               }
             }
-            node.replaceWith(scrub || img);
+            // (a film painted in keeps changing the canvas — not a scene scrubbed by the scroll: the film wins)
+            const feed = videoFeed.get(src);
+            if (feed && !img.hasAttribute("data-sl-island") && !scrub?.hasAttribute("data-sl-island")) {
+              const vid = document.createElement("video");
+              for (const a of Array.from(img.attributes)) if (a.name !== "src") vid.setAttribute(a.name, a.value);
+              vid.setAttribute("poster", img.getAttribute("src") || "");
+              vid.setAttribute("src", feed);
+              for (const a of ["autoplay", "muted", "loop", "playsinline"]) vid.setAttribute(a, "");
+              vid.setAttribute("preload", "auto");
+              vid.style.setProperty("object-fit", "cover");
+              vid.setAttribute("data-sl-canvas-video", "");
+              node.replaceWith(vid);
+              stats.canvasVideos = (stats.canvasVideos || 0) + 1;
+            } else node.replaceWith(scrub || img);
             stats.canvases++;
           }
         } catch {
@@ -3292,6 +3424,43 @@ ${out.join("\n")}
   // which 3D scenes stay live: the two largest (each live scene loads the site's page again in the visitor's
   // browser — a heavy WebGL site many times over would swamp it); the others keep their pictures
   let islandPick: Set<Element> | null = null;
+  // A big canvas painting a hidden film (busybox.io's hero: a looping video drawn into WebGL, the <video> itself 2×2
+  // and see-through): where the page's own code doesn't run — the copy — the film itself plays in the canvas's place
+  // (not for a canvas kept live as a 3D scene, nor a small one: a film on a 3D object is not a backdrop)
+  const videoFeed = new Map<Element, string>();
+  // (recorded before the scroll pass too: a page may tear its WebGL hero down while it is scrolled away and build it
+  // again only a moment after it is back — busybox.io — gone when the copy is taken: its film is put back in its place)
+  const feedsEarly: { canvas: Element; parent: Element; next: Node | null; attrs: [string, string][]; film: string }[] = [];
+  function recordFeedsEarly(): void {
+    findVideoFeeds();
+    for (const [c, film] of videoFeed) {
+      if (!c.parentElement || feedsEarly.length >= 4) continue;
+      feedsEarly.push({ canvas: c, parent: c.parentElement, next: c.nextSibling, attrs: Array.from(c.attributes).map((a) => [a.name, a.value] as [string, string]), film });
+    }
+    videoFeed.clear();
+  }
+  function findVideoFeeds(): void {
+    try {
+      for (const v of Array.from(document.querySelectorAll("video"))) {
+        const r = v.getBoundingClientRect();
+        const cs = getComputedStyle(v);
+        const hidden = (r.width <= 8 && r.height <= 8) || parseFloat(cs.opacity) <= 0.05 || cs.visibility === "hidden" || cs.display === "none";
+        const src = v.currentSrc || v.getAttribute("src") || v.querySelector("source")?.getAttribute("src") || "";
+        if (!hidden || !src || /^(blob|data):/.test(src) || !(v.loop || v.autoplay || !v.paused)) continue;
+        let best: Element | null = null, area = 0;
+        for (let a: Element | null = v.parentElement, up = 0; a && a !== document.body && a !== document.documentElement && up < 3 && !best; a = a.parentElement, up++) {
+          for (const c of Array.from(a.querySelectorAll("canvas"))) {
+            const cr = c.getBoundingClientRect();
+            const ar = cr.width * cr.height;
+            if (ar >= innerWidth * innerHeight * 0.6 && ar > area) { best = c; area = ar; }
+          }
+        }
+        if (best) videoFeed.set(best, new URL(src, location.href).href);
+      }
+    } catch {
+      /* no video */
+    }
+  }
   // ── Classes put on the page itself (html / body) and its bars past a scroll position ────────────
   // ("show-localnav" once past the hero, "is-scrolled" turning a header solid): sampled at every stop of
   // the scroll pass, written as data-sl-scroll-classes='[{"t":token,"a":from,"b":to}]' for the trigger
@@ -4277,6 +4446,26 @@ ${out.join("\n")}
       }
     }
     if (restored.length) stats.playersRestored = restored.length;
+    for (const f of feedsEarly) {
+      if (f.canvas.isConnected || !f.parent.isConnected) continue;
+      const cls = f.attrs.find(([n]) => n === "class")?.[1];
+      if (cls && Array.from(f.parent.children).some((x) => x.tagName === "CANVAS" && x.getAttribute("class") === cls)) continue; // built again already
+      try {
+        const vid = document.createElement("video");
+        for (const [n, v] of f.attrs) if (!/^(width|height|data-sl-)/.test(n)) vid.setAttribute(n, v);
+        vid.setAttribute("src", f.film);
+        for (const a of ["autoplay", "muted", "loop", "playsinline"]) vid.setAttribute(a, "");
+        vid.setAttribute("preload", "auto");
+        vid.style.setProperty("object-fit", "cover");
+        vid.setAttribute("data-sl-canvas-video", "");
+        if (f.next && f.next.parentNode === f.parent) f.parent.insertBefore(vid, f.next);
+        else f.parent.appendChild(vid);
+        restored.push(vid);
+        stats.canvasVideos = (stats.canvasVideos || 0) + 1;
+      } catch {
+        /* the page moved on */
+      }
+    }
     mark(document);
     // GSAP animations made while we scrolled (ScrollTrigger.batch creates them on enter): the page-world
     // recorder (settle.ts) writes them down now, synchronously, before the copy
@@ -4286,6 +4475,7 @@ ${out.join("\n")}
     } catch {
       /* no recorder on this page */
     }
+    findVideoFeeds();
     islandPick = new Set(
       Array.from(document.querySelectorAll("canvas[data-sl-gl]"))
         .map((c) => ({ c, r: c.getBoundingClientRect() }))
@@ -4301,7 +4491,9 @@ ${out.join("\n")}
     const watched = clsTargets as Element[] | null;
     stats.scrollClassWatch = watched ? watched.length : 0;
     if (watched) stats.scrollClassWatched = watched.slice(0, 30).map((t) => t.localName + (t.id ? "#" + t.id : "") + (typeof t.className === "string" && t.className.trim() ? "." + t.className.trim().split(/\s+/).slice(0, 2).join(".") : "")).join(" ");
-    if (DBG) for (const e of Array.from(document.querySelectorAll(DBG)).slice(0, 4)) dbg(e, `at the copy: [${e.getAttribute("style")}] ${[...e.attributes].filter((a) => a.name.startsWith("data-sl")).map((a) => a.name).join(" ")}`);
+    if (DBG) for (const e of Array.from(document.querySelectorAll(DBG)).slice(0, 4)) dbg(e, `at the copy: [${e.getAttribute("style")}] ${[...e.attributes].filter((a) => a.name.startsWith("data-sl")).map((a) => a.name).join(" ")} — showing: opacity ${getComputedStyle(e).opacity}, html.${document.documentElement.className.replace(/\s+/g, ".")}`);
+    // (where the page really is as it is copied: a smooth-scroll library may hold its own position)
+    stats.copiedAtY = Math.round(scrollY);
     const root = document.documentElement.cloneNode(true) as HTMLElement;
     tidyWhitespace(document.documentElement, root);
     root.querySelectorAll(UI_SELECTOR).forEach((n) => n.remove());

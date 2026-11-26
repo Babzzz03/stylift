@@ -1560,7 +1560,12 @@ async function liveScenes(r: CaptureResult, prefix: string): Promise<IslandFiles
     const media = /\.(mp4|webm|mov|m4v|ogv|mp3|wav|m4a|aac|ogg)(\?|#|$)/i;
     const needed = ((resources as string[]) || []).filter((u) => !shown.has(u) && !media.test(u));
     srcLog(`  … 3D scenes: ${needed.length} of the page's ${((resources as string[]) || []).length} files (its own pictures and videos left to the copy)`);
-    const m = await buildLiveMirror(r.url, page.html, needed, { fetchFile: mirrorFetch, skip: (u) => shown.has(u) || media.test(u) }, (done, total) => setStatus(`Keeping the 3D scenes live — the site's files ${done}/${total}…`, "busy"));
+    const m = await buildLiveMirror(r.url, page.html, needed, { fetchFile: mirrorFetch, skip: (u) => shown.has(u) || media.test(u), maxBytes: LIVE_3D_BUDGET }, (done, total) => setStatus(`Keeping the 3D scenes live — the site's files ${done}/${total}…`, "busy"));
+    // more than an editable export should carry (and a modest computer should hold while zipping): pictures instead
+    if (m.overBudget) {
+      srcLog(`  ⚠ the 3D scenes would need more than ${Math.round(LIVE_3D_BUDGET / 1e6)} MB of the site's files: they stay pictures in this export (a Live mirror keeps them running)`);
+      return null;
+    }
     if (m.missingEssential.length) srcLog(`  ⚠ ${m.missingEssential.length} of the site's own scripts / stylesheets couldn't be downloaded: its 3D scenes may not run`);
     const n = ((r.html.match(/\sdata-sl-island="/g) || []) as string[]).length;
     srcLog(`  + ${n} 3D scene(s) kept live: ${m.count} of the site's files, ${(m.bytes / 1e6).toFixed(1)} MB (served from the site's root; a page opened from disk shows their pictures)`);
@@ -1570,6 +1575,9 @@ async function liveScenes(r: CaptureResult, prefix: string): Promise<IslandFiles
     return null;
   }
 }
+
+// the most of a site's own files a page export takes along to keep its 3D scenes live
+const LIVE_3D_BUDGET = 150_000_000;
 
 // Page → zipped project (HTML, React/Vite or Next.js).
 const KIND_LABEL = { html: "HTML", react: "React (Vite)", next: "Next.js" } as const;

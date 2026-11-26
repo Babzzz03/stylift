@@ -22,6 +22,8 @@ export interface MirrorResolvers {
   retryWaitsMs?: number[];
   /** files not to store (a live 3D scene's copy leaves out the page's own pictures and videos) */
   skip?: (url: string) => boolean;
+  /** stop collecting past this many bytes (a live 3D scene inside an editable export: an add-on, kept light) */
+  maxBytes?: number;
 }
 export interface MirrorResult {
   files: Record<string, Uint8Array | string>;
@@ -29,6 +31,8 @@ export interface MirrorResult {
   missing: string[];
   /** missing files the pages can't work without: their own scripts and stylesheets */
   missingEssential: string[];
+  /** collecting stopped at the byte budget with files still to get */
+  overBudget?: boolean;
   /** files stored */
   count: number;
   bytes: number;
@@ -325,6 +329,7 @@ export async function buildSiteMirror(
   let quietMediaBytes = 0;
   const pageLang = (/<html\b[^>]*\blang=["']?([a-zA-Z]{2})/i.exec(pages[0].html)?.[1] || "").toLowerCase();
   const code: { url: string; bytes: Uint8Array }[] = [];
+  let overBudget = false; // stopped at maxBytes / MAX_TOTAL with files still to get
   let bytes = 0, done = 0;
 
   // fetch with a small pool; CSS discovered on the way adds its own url()s
@@ -344,7 +349,9 @@ export async function buildSiteMirror(
           continue; // over the budget for media only named in code
         }
       }
-      const got = bytes < MAX_TOTAL ? await r.fetchFile(url) : null;
+      const cap = Math.min(MAX_TOTAL, r.maxBytes ?? MAX_TOTAL);
+      if (bytes >= cap) overBudget = true;
+      const got = bytes < cap ? await r.fetchFile(url) : null;
       if (got && quietMedia) quietMediaBytes += got.bytes.length;
       done++;
       onProgress?.(done, done + queue.length);
@@ -494,7 +501,7 @@ export async function buildSiteMirror(
   files["package.json"] = JSON.stringify({ name: `${safeSeg(page.host)}-mirror`, private: true, type: "module", scripts: { start: "node server.mjs" } }, null, 2) + "\n";
   files["README.md"] = readme(page.href, Object.keys(manifest).length, missing, pages.map((p) => p.url.pathname), missing.filter((u) => essential.has(u)));
   const missingEssential = missing.filter((u) => essential.has(u));
-  return { files, missing, missingEssential, count: Object.keys(manifest).length, bytes, entryPath: entryLocal, pages: pages.length };
+  return { files, missing, missingEssential, count: Object.keys(manifest).length, bytes, entryPath: entryLocal, pages: pages.length, overBudget };
 }
 
 function readme(source: string, count: number, missing: string[], paths: string[], essential: string[] = []): string {

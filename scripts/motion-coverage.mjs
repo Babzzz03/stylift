@@ -141,17 +141,20 @@ async function probeOnce(port, url, tab) {
   const t = (tab.t = await openTab(port, url));
   const t0 = Date.now();
   try {
-    await sleep(3500); // intros / preloaders
-    const libs = (await t.ev(LIBS)) || [];
+    // watched from early on, left alone, until ~11 s: an intro — quick (a copy plays it as soon as its styles apply)
+    // or late (after a site's preloader) — counts on both pages alike
+    await sleep(1200);
     await t.ev(SAMPLER);
     await t.ev(`__mp.sample("idle0")`);
-    // watched a while left alone: an intro that starts late (after a preloader, ~5–8 s) counts on both pages alike
-    for (let i = 0; i < 5; i++) {
+    for (let i = 0; i < 8; i++) {
       await sleep(1200);
       await t.ev(`__mp.sample("idle")`);
     }
-    // scroll with the wheel, like a person; stop at the bottom. The pointer sits at the far left edge: in the
-    // middle it would hover whatever scrolls under it (a work list showing posters), counted as scroll motion
+    const libs = (await t.ev(LIBS)) || [];
+    // scroll with the wheel, like a person; stop at the bottom. Nothing under the pointer reacts to it meanwhile
+    // (pointer-events off everywhere — a work list sliding under it would show its hover posters, counted as scroll
+    // motion on one page and not the other); the wheel still scrolls the page and reaches its scroll scripts
+    await t.ev(`(() => { const s = document.createElement("style"); s.textContent = "*, *::before, *::after { pointer-events: none !important; }"; (document.head || document.documentElement).appendChild(s); return 1; })()`);
     await t.send("Input.dispatchMouseEvent", { type: "mouseMoved", x: 2, y: 450 });
     let lastY = -1, still = 0;
     for (let i = 0; i < 90 && still < 4 && Date.now() - t0 < PROBE_MS - 30000; i++) {

@@ -266,6 +266,14 @@ writeFileSync(join(outdir, "slidetitles.html"), `<!doctype html><html><head><sty
 writeFileSync(join(outdir, "slidegap.html"), `<!doctype html><html><head><style>body{margin:0;font:40px sans-serif} .tall{height:1400px} #sg{position:relative;height:400px} .gs{position:absolute;inset:0}</style></head><body>
 <div id="sg">${[0, 1, 2].map((k) => `<div class="gs" id="gs${k}" style="display: ${k === 0 ? "block" : "none"};">Work ${k}</div>`).join("")}</div><div class="tall"></div><div class="tall"></div>
 <script>{ const ss = [...document.querySelectorAll(".gs")]; let k = 0; setInterval(() => { ss.forEach((s) => (s.style.display = "none")); k = (k + 1) % ss.length; setTimeout(() => (ss[k].style.display = "block"), 500); }, 1500); }</script></body></html>`);
+// a hero whose backdrop is a looping film painted into a big canvas, the <video> itself 2×2 and see-through
+// (busybox.io) — one torn down while scrolled away and built again only a moment after the page is back at the top,
+// one kept: in the copy, where the page's code doesn't run, the film itself plays in each canvas's place
+writeFileSync(join(outdir, "canvasfilm.html"), `<!doctype html><html><head><style>body{margin:0} .stage{position:relative;height:700px;overflow:hidden} .stage canvas{position:absolute;inset:0;width:100%;height:100%} .feed{position:absolute;left:0;top:0;width:2px;height:2px;opacity:0.01} .tall{height:1600px}</style></head><body>
+<div class="stage" id="sa"><canvas id="cfa" class="hero__seq" width="1440" height="700"></canvas><video class="feed" src="film-a.mp4" loop muted autoplay playsinline></video></div>
+<div class="stage" id="sb"><canvas id="cfb" class="hero__seq" width="1440" height="700"></canvas><video class="feed" src="film-b.mp4" loop muted autoplay playsinline></video></div>
+<div class="tall"></div><div class="tall"></div>
+<script>{ const sa = document.getElementById("sa"), ca = document.getElementById("cfa"); for (const c of document.querySelectorAll("canvas")) { const x = c.getContext("2d"); setInterval(() => { x.fillStyle = "hsl(" + ((performance.now() / 20) % 360) + ",60%,40%)"; x.fillRect(0, 0, c.width, c.height); }, 120); } addEventListener("scroll", () => { if (scrollY > 1500 && ca.isConnected) ca.remove(); else if (scrollY < 200 && !ca.isConnected) setTimeout(() => { if (!ca.isConnected && scrollY < 200) sa.insertBefore(ca, sa.firstChild); }, 2500); }); }</script></body></html>`);
 // a <picture> whose <source> offers a 1x and a 2x file (as apple.com's icons): a high-density screen picks the
 // 2x one; the copy must keep showing it at its 1x size
 {
@@ -845,6 +853,12 @@ for (const variant of ["", "#bundled"]) {
     shown.push([0, 1, 2].filter((k) => /display:\s*block/.test(d.querySelector(`#gs${k}`)?.getAttribute("style") || "")).length);
   }
   ok(shown.every((n) => n === 1), `a slider that hides every slide for a moment at each turn is copied between turns: one slide showing, three captures out of three (${shown.join(", ")})`);
+}
+{ const fc = await capture(synthUrl.replace("page.html", "canvasfilm.html"), {}, 500).catch((e) => ({ html: "", error: String(e) }));
+  const d = new JSDOM(fc.html || "<html></html>").window.document;
+  const films = ["#sa", "#sb"].map((q) => d.querySelector(`${q} video[data-sl-canvas-video]`));
+  const ok1 = films.every((v) => v && /film-[ab]\.mp4$/.test(v.getAttribute("src") || "") && ["autoplay", "loop", "muted", "playsinline"].every((a) => v.hasAttribute(a)) && /hero__seq/.test(v.getAttribute("class") || ""));
+  ok(ok1 && !d.querySelector("#sa canvas, #sb canvas"), `a big canvas painting a hidden looping film plays the film itself in the copy — also one the page tore down while scrolled away (${films.map((v) => v ? (v.getAttribute("src") || "").split("/").pop() + (v.hasAttribute("loop") ? " loop" : "") : "none").join(" · ")}; ${fc.stats?.canvasVideos || 0} film(s))`);
 }
 { const pc = await capture(synthUrl.replace("page.html", "picture.html"), {}, 500, null, 2).catch((e) => ({ html: "", error: String(e) }));
   const d = new JSDOM(pc.html || "<html></html>").window.document;

@@ -89,6 +89,22 @@ const cpaths = Object.keys(cm.files);
 const clash = cpaths.filter((k) => cpaths.some((o) => o.startsWith(k + "/")));
 ok(!clash.length && cm.missing.length === 0, `no file shares its name with a folder, nothing lost (${clash.join(", ") || "none"})`);
 
+// a byte budget (a live 3D scene inside an editable export): collecting stops there and says so
+{
+  const big = Object.fromEntries(Array.from({ length: 12 }, (_, i) => [`https://ex.com/tex/t${i}.ktx2`, 1_000_000]));
+  const bm = await buildLiveMirror("https://ex.com/", "<html><head></head><body>x</body></html>", Object.keys(big), {
+    fetchFile: async (u) => (big[u] ? { type: "image/ktx2", bytes: new Uint8Array(big[u]) } : null),
+    maxBytes: 5_000_000,
+  });
+  // (a few files already on their way when it is reached still arrive: fetched several at a time)
+  ok(bm.overBudget === true && bm.bytes < 12_000_000, `a byte budget stops the collecting and says so (${(bm.bytes / 1e6).toFixed(1)} MB of 12, budget 5, over budget: ${bm.overBudget})`);
+  const fm = await buildLiveMirror("https://ex.com/", "<html><head></head><body>x</body></html>", Object.keys(big).slice(0, 3), {
+    fetchFile: async (u) => (big[u] ? { type: "image/ktx2", bytes: new Uint8Array(big[u]) } : null),
+    maxBytes: 5_000_000,
+  });
+  ok(!fm.overBudget && fm.bytes === 3_000_000, "…and within it, everything is collected and nothing is flagged");
+}
+
 // a dropping connection: the page's own script fails twice then arrives; its stylesheet never does
 let tries = 0;
 const flakyM = await buildLiveMirror("https://ex.com/", `<html><head><script type="module" src="/app.mjs"></script><link rel="stylesheet" href="/main.css"></head><body>x</body></html>`, [], {

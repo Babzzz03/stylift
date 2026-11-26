@@ -19,13 +19,15 @@ const out = mkdtempSync(join(tmpdir(), "sl-cp-"));
 await build({ entryPoints: { cap: "src/extractor/capture.ts", settle: "src/extractor/settle.ts" }, outdir: out, bundle: true, format: "esm", platform: "neutral", target: "es2021", logLevel: "silent" });
 const { capturePage } = await import(pathToFileURL(join(out, "cap.js")));
 const { settleAnimations } = await import(pathToFileURL(join(out, "settle.js")));
-const expr = `(async function(){ (${settleAnimations.toString()})(); const r = await (${capturePage.toString()})({}); return JSON.stringify({ html: r.html, stats: r.stats }); })()`;
+// --no-settle: capture without fast-forwarding the page's running animations first (to see what that step does)
+const expr = `(async function(){ ${args.includes("--no-settle") ? "" : `(${settleAnimations.toString()})();`} const r = await (${capturePage.toString()})({}); return JSON.stringify({ html: r.html, stats: r.stats }); })()`;
 const page = REMOTE ? "" : readFileSync(PAGE, "utf8");
 const srv = createServer((q, res) => { res.setHeader("content-type", "text/html"); res.end(page); });
 await new Promise((r) => srv.listen(0, "127.0.0.1", r));
 const prof = mkdtempSync(join(tmpdir(), "sl-cp-p-"));
 const port = 9500 + Math.floor(Math.random() * 40);
-const ch = spawn("/Applications/Google Chrome.app/Contents/MacOS/Google Chrome", ["--headless=new", `--remote-debugging-port=${port}`, `--user-data-dir=${prof}`, "--window-size=1440,900", "about:blank"]);
+// --gpu: WebGL through the software renderer (a site that draws its hero with WebGL only makes its canvas when it can)
+const ch = spawn("/Applications/Google Chrome.app/Contents/MacOS/Google Chrome", ["--headless=new", `--remote-debugging-port=${port}`, `--user-data-dir=${prof}`, "--window-size=1440,900", "--autoplay-policy=no-user-gesture-required", ...(args.includes("--gpu") ? ["--enable-unsafe-swiftshader"] : []), "about:blank"]);
 const done = (c) => { try { ch.kill("SIGKILL"); } catch {} srv.close(); setTimeout(() => { rmSync(prof, { recursive: true, force: true }); rmSync(out, { recursive: true, force: true }); process.exit(c); }, 300); };
 try {
   for (let i = 0; i < 200; i++) { try { await fetch(`http://127.0.0.1:${port}/json/version`); break; } catch { await sleep(200); } }

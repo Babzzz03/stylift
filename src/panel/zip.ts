@@ -23,7 +23,26 @@ function crc32(buf: Uint8Array): number {
   return (c ^ 0xffffffff) >>> 0;
 }
 
+/** The zip as it is written, piece by piece: small headers and each file's own bytes, never copied together — a big
+ *  export (100+ MB of models and pictures) held three times over in memory could take the browser down. Build a
+ *  Blob from them (the browser may keep a large one on disk). */
+export function zipParts(entries: ZipEntry[]): Uint8Array[] {
+  return zipBuild(entries);
+}
+
 export function zipSync(entries: ZipEntry[]): Uint8Array {
+  const parts = zipBuild(entries);
+  const len = parts.reduce((a, p) => a + p.length, 0);
+  const out = new Uint8Array(len);
+  let o = 0;
+  for (const p of parts) {
+    out.set(p, o);
+    o += p.length;
+  }
+  return out;
+}
+
+function zipBuild(entries: ZipEntry[]): Uint8Array[] {
   const chunks: Uint8Array[] = [];
   const central: Uint8Array[] = [];
   let offset = 0;
@@ -59,9 +78,8 @@ export function zipSync(entries: ZipEntry[]): Uint8Array {
       u16(name.length),
       u16(0), // extra length
       name,
-      data,
     ]);
-    chunks.push(local);
+    chunks.push(local, data); // the file's own bytes, as they are (not copied into the header)
     central.push(
       concat([
         u32(0x02014b50), // central dir header signature
@@ -84,7 +102,7 @@ export function zipSync(entries: ZipEntry[]): Uint8Array {
         name,
       ]),
     );
-    offset += local.length;
+    offset += local.length + data.length;
   }
 
   const cd = concat(central);
@@ -99,5 +117,5 @@ export function zipSync(entries: ZipEntry[]): Uint8Array {
     u16(0), // comment length
   ]);
 
-  return concat([...chunks, cd, eocd]);
+  return [...chunks, cd, eocd];
 }
