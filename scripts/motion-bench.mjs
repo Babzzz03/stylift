@@ -33,7 +33,16 @@ const sites = opt("--sites", "") ? opt("--sites", "").split(",") : SITES;
 const label = opt("--label", "");
 mkdirSync(OUT, { recursive: true });
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-const calm = async (lim = 8) => { while (loadavg()[1] >= lim) { console.log(`  … waiting for a calm machine (load ${loadavg()[1].toFixed(1)})`); await sleep(20000); } };
+// (at most 10 minutes: background work on the computer — macOS indexing, the person's own apps — can keep the load up
+// for hours; both pages are then measured under the same load, which is said in the log)
+const calm = async (lim = 8) => {
+  const t0 = Date.now();
+  while (loadavg()[1] >= lim) {
+    if (Date.now() - t0 > 10 * 60000) { console.log(`  … the machine stayed busy (load ${loadavg()[1].toFixed(1)}): measuring anyway`); return; }
+    console.log(`  … waiting for a calm machine (load ${loadavg()[1].toFixed(1)})`);
+    await sleep(20000);
+  }
+};
 const host = (u) => new URL(u).host.replace(/^www\./, "");
 
 const rows = [];
@@ -44,7 +53,7 @@ for (const url of sites) {
   rmSync(dir, { recursive: true, force: true });
   await calm();
   const t0 = Date.now();
-  const ex = spawnSync("caffeinate", ["-i", "node", "scripts/verify-extension-real.mjs", url, "--only", "html", "--no-site", "--out", dir], { env: { ...process.env, SL_DIST: DIST }, encoding: "utf8", timeout: 15 * 60000 });
+  const ex = spawnSync("caffeinate", ["-i", "node", "scripts/verify-extension-real.mjs", url, "--only", "html", "--no-site", "--out", dir], { env: { ...process.env, SL_DIST: DIST }, encoding: "utf8", timeout: 25 * 60000 });
   writeFileSync(join(dir + ".export.log"), (ex.stdout || "") + (ex.stderr || ""));
   const exported = /✓ This page → HTML/.test(ex.stdout || "");
   console.log(`  export: ${exported ? "ok" : "FAILED"} in ${Math.round((Date.now() - t0) / 1000)} s`);

@@ -87,15 +87,17 @@ export function splitBlocks(css: string): Block[] {
 }
 const GROUPING = /^@(media|supports|container|layer|scope|document)\b/i;
 /** Keep only the parts of a stylesheet that style the given (new) classes. */
-function filterCss(css: string, wanted: Set<string>, knownAtRules: Set<string>): string {
+function filterCss(css: string, wanted: Set<string>, knownAtRules: Set<string>, wantedIds: Set<string> = new Set()): string {
   const usesWanted = (sel: string) => {
     for (const m of sel.matchAll(/\.(-?[_a-zA-Z][\w-]*)/g)) if (wanted.has(m[1])) return true;
+    // (a StyleLift motion rule for one of the new layouts' own elements)
+    for (const m of sel.matchAll(/\[data-sl-[a-z-]+="([^"]+)"\]/g)) if (wantedIds.has(m[1])) return true;
     return false;
   };
   let out = "";
   for (const b of splitBlocks(css)) {
     if (GROUPING.test(b.prelude)) {
-      const inner = filterCss(b.body, wanted, knownAtRules);
+      const inner = filterCss(b.body, wanted, knownAtRules, wantedIds);
       if (inner.trim()) out += `${b.prelude}{${inner}}\n`;
     } else if (/^@(font-face|keyframes|-webkit-keyframes|property|counter-style)\b/i.test(b.prelude)) {
       const text = `${b.prelude}{${b.body}}`;
@@ -134,7 +136,8 @@ export function mergeVariantCaptures(desktopHtml: string, extras: string[]): Var
   // in any capture. Framer often renders one variant for two widths (desktop+tablet)
   // while the narrower capture hydrates a tablet-only twin of it: adding that twin
   // would show the section twice at tablet width.
-  const extraDocs = extras.map((x) => new DOMParser().parseFromString(x, "text/html"));
+  // (each narrower capture numbered its animations from 1, like the desktop one: renamed apart first)
+  const extraDocs = extras.map((x, i) => new DOMParser().parseFromString(namespaceAnimations(x, `w${i + 1}`), "text/html"));
   const universe = new Map<string, Set<string>>();
   const addToUniverse = (slot: string, v: Element) => {
     const u = universe.get(slot) ?? new Set<string>();
@@ -162,6 +165,7 @@ export function mergeVariantCaptures(desktopHtml: string, extras: string[]): Var
   for (const e of extraDocs) {
     let usedHere = false;
     const newClasses = new Set<string>();
+    const newIds = new Set<string>();
     e.querySelectorAll(".ssr-variant").forEach((v) => {
       if (!v.parentElement) return;
       const slot = slotKey(v.parentElement);
@@ -186,6 +190,7 @@ export function mergeVariantCaptures(desktopHtml: string, extras: string[]): Var
       const variants = Array.from(parent.children).filter((c) => c.classList.contains("ssr-variant"));
       const node = doc.importNode(v, true);
       [node, ...Array.from(node.querySelectorAll("[class]"))].forEach((el) => el.classList.forEach((c) => !knownClasses.has(c) && newClasses.add(c)));
+      motionIds(node).forEach((x) => newIds.add(x));
       if (variants.length) variants[variants.length - 1].after(node);
       else parent.appendChild(node);
       have.add(key);
@@ -201,7 +206,7 @@ export function mergeVariantCaptures(desktopHtml: string, extras: string[]): Var
     e.querySelectorAll("style").forEach((s) => {
       const t = s.textContent || "";
       if (!t.trim() || styleTexts.has(t)) return;
-      extraCss += filterCss(t, newClasses, knownAtRules);
+      extraCss += filterCss(t, newClasses, knownAtRules, newIds);
     });
     if (extraCss.trim()) {
       const st = doc.createElement("style");
@@ -256,18 +261,27 @@ export function needsWholeLayout(desktopHtml: string, narrowHtml: string): boole
   return fresh >= 2;
 }
 
-/** Rename StyleLift animation ids so a second layout can't collide with the first. */
-function namespaceAnimations(html: string, p: string): string {
-  return html
-    .replace(/sl-reveal-r(\d+)/g, `sl-reveal-${p}r$1`)
-    .replace(/data-sl-reveal="r(\d+)"/g, `data-sl-reveal="${p}r$1"`)
-    .replace(/\[data-sl-reveal="r(\d+)"\]/g, `[data-sl-reveal="${p}r$1"]`)
-    .replace(/sl-scroll-s(\d+)/g, `sl-scroll-${p}s$1`)
-    .replace(/data-sl-scroll="s(\d+)"/g, `data-sl-scroll="${p}s$1"`)
-    .replace(/\[data-sl-scroll="s(\d+)"\]/g, `[data-sl-scroll="${p}s$1"]`)
-    .replace(/--sl-t(\d+)/g, `--sl-${p}t$1`)
-    .replace(/data-sl-(vt|tl)="t(\d+)"/g, `data-sl-$1="${p}t$2"`)
-    .replace(/\[data-sl-(vt|tl)="t(\d+)"\]/g, `[data-sl-$1="${p}t$2"]`);
+/** Rename StyleLift animation ids so a second layout can't collide with the first: every id the capture numbers
+ *  (scroll-linked s#, reveals r#, entrances g#, loops l#, hovers h# / h#-#, pointer effects p#, pins p#, progress
+ *  variables v#, scrubbed frames f#-#, timelines t#) — in the attributes, the selectors and the keyframes' names.
+ *  (Each capture numbers from 1: merged as they were, a tablet capture's sl-scroll-s1 replaced the desktop's —
+ *  monodrift.framer.website's hero panel slid by the tablet's numbers.) */
+const ID_ATTRS: [string, string][] = [
+  ["data-sl-reveal", "r"], ["data-sl-scroll", "s"], ["data-sl-in", "g"], ["data-sl-loop", "l"], ["data-sl-hov", "h"], ["data-sl-hovt", "h"],
+  ["data-sl-pull", "p"], ["data-sl-tilting", "p"], ["data-sl-pinned", "p"], ["data-sl-var", "v"], ["data-sl-frame", "f"], ["data-sl-vt", "t"], ["data-sl-tl", "t"],
+];
+const ID_KEYFRAMES: [string, string][] = [["sl-reveal-", "r"], ["sl-scroll-", "s"], ["sl-in-", "g"], ["sl-loop-", "l"], ["sl-pin-", "p"], ["sl-var-", "v"]];
+export function namespaceAnimations(html: string, p: string): string {
+  let out = html;
+  for (const [a, x] of ID_ATTRS) out = out.replace(new RegExp(`(${a}=["']?)${x}(\\d)`, "g"), `$1${p}${x}$2`);
+  for (const [k, x] of ID_KEYFRAMES) out = out.replace(new RegExp(`\\b${k}${x}(\\d)`, "g"), `${k}${p}${x}$1`);
+  return out.replace(/--sl-t(\d+)/g, `--sl-${p}t$1`);
+}
+/** the StyleLift motion ids used in a subtree (its rules come along with it) */
+function motionIds(root: Element): Set<string> {
+  const ids = new Set<string>();
+  for (const el of [root, ...Array.from(root.querySelectorAll("*"))]) for (const [a] of ID_ATTRS) { const v = el.getAttribute(a); if (v) ids.add(v); }
+  return ids;
 }
 
 export function addWholeLayout(desktopHtml: string, narrowHtml: string, label: LayoutLabel): { html: string; styles: number } {

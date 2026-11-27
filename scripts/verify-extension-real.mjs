@@ -20,7 +20,7 @@ const PAGES = Number(flag("--pages") || 6);
 // --only html,next,live,site — run just these buttons (a heavy site on a small machine)
 const ONLY = (flag("--only") || "html,next,studio,live,site").split(",").map((x) => x.trim());
 const OUT = flag("--out") || mkdtempSync(join(tmpdir(), "sl-ext-real-"));
-const urls = args.filter((a, i) => !a.startsWith("--") && !["--pages", "--out", "--only"].includes(args[i - 1]));
+const urls = args.filter((a, i) => !a.startsWith("--") && !["--pages", "--out", "--only", "--studio-eval"].includes(args[i - 1]));
 if (!urls.length) urls.push("https://saul-rhand-main.webflow.io/", "https://www.kivoagentic.ai/", "https://coutumes.com/");
 mkdirSync(OUT, { recursive: true });
 
@@ -79,7 +79,9 @@ function availableGB() {
     return ((pages("Pages free") + pages("Pages inactive") + pages("Pages speculative")) * 4096) / 1e9;
   } catch { return 99; }
 }
-async function waitForCalm(maxMin = 20) {
+// (capped: background work on the computer can hold the load up for hours — the benchmark that runs this has waited
+// already, and gives each export 25 minutes in all)
+async function waitForCalm(maxMin = 6) {
   const t0 = Date.now(); let said = 0;
   for (;;) {
     const load = loadavg()[0], free = availableGB();
@@ -232,6 +234,9 @@ for (const url of urls) {
           height: d.documentElement.scrollHeight }; })()`);
         studio.secs = Math.round((Date.now() - t0) / 1000);
         studio.check = m;
+        // --studio-eval "<expression>": evaluated in the Desktop artboard's document (`d`) — a diagnostic
+        const se = flag("--studio-eval");
+        if (se) console.log(`      studio-eval: ${JSON.stringify(await sv(`(() => { const d = window.__studio.S.frames.get("base").contentDocument; const w = d.defaultView; return (${se}); })()`))}`.slice(0, 2000));
         studio.ok = !!m && m.layers > 3 && !m.broken.length && !m.emptyVideos;
         await fetch(`http://127.0.0.1:${port}/json/activate/${stT.id}`); await sleep(1500); // a hidden tab can't be pictured
         const shot = await sc.send("Page.captureScreenshot", { format: "jpeg", quality: 70 });
@@ -343,7 +348,7 @@ for (const url of urls) {
   // ── each mirror: its own server, a GPU Chrome with the internet cut off, at another domain ──
   for (const mir of row.mirrors) {
    try {
-    await waitForCalm(10);
+    await waitForCalm(5);
     const manifest = JSON.parse(readFileSync(join(mir.dir, "mirror-manifest.json"), "utf8"));
     const mport = 4800 + Math.floor(Math.random() * 150);
     const srv = spawn("node", ["server.mjs"], { cwd: mir.dir, env: { ...process.env, PORT: String(mport) } }); kids.push(srv);

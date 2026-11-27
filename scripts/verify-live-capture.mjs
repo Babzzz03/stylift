@@ -85,6 +85,18 @@ writeFileSync(join(outdir, "pin.html"), `<!doctype html><html><head><style>body{
 <script>gsap.registerPlugin(ScrollTrigger); gsap.to("#htrack", { x: -2000, ease: "none", scrollTrigger: { trigger: "#pinsec", pin: true, start: "top top", end: "+=2000", scrub: true } });
 if (location.hash === "#bundled") { window.gsap = undefined; window.ScrollTrigger = undefined; }</script>
 </body></html>`);
+// hovers a component runs with ONE state for all its items (a fanned stack of cards: hovering one zooms its picture,
+// the others go back — several hovered at once leave only the last zoomed: mirelle.framer.media), and a link whose
+// letters roll up one by one (a script's tweens, 40 ms apart — Framer's text effects)
+writeFileSync(join(outdir, "fanhover.html"), `<!doctype html><html><head><style>body{margin:0;font:16px sans-serif} .fan{position:relative;height:420px;margin:40px} .fcard{position:absolute;top:40px;width:220px;height:220px;overflow:hidden;border-radius:16px;cursor:pointer} .fcard a{display:block;width:100%;height:100%} .fcard .pic{width:100%;height:100%;background:linear-gradient(135deg,#c33,#36c)} .roll{display:inline-flex;margin:40px;font-size:20px;line-height:24px;cursor:pointer;color:#111;text-decoration:none} .roll span{display:inline-block;height:24px;overflow:hidden} .roll i{display:block;font-style:normal}</style></head><body>
+<div class="fan" id="fan">${[0, 1, 2, 3].map((i) => `<div class="fcard" style="left:${40 + i * 160}px;transform:rotate(${(i - 1.5) * 8}deg)"><a href="#w${i}" id="fa${i}"><div class="pic" id="fp${i}"></div></a></div>`).join("")}</div>
+<a class="roll" id="roll" href="#about">${[..."About"].map((ch, i) => `<span><i id="rl${i}">${ch}</i><i>${ch}</i></span>`).join("")}</a>
+<script>{ let hovered = -1; const pics = [...document.querySelectorAll(".fcard .pic")];
+  const show = () => pics.forEach((p, i) => { p.style.transition = "transform .4s"; p.style.transform = i === hovered ? "scale(1.3)" : "scale(1)"; });
+  document.querySelectorAll(".fcard a").forEach((a, i) => { a.addEventListener("pointerenter", () => { hovered = i; show(); }); a.addEventListener("pointerleave", () => { if (hovered === i) { hovered = -1; show(); } }); });
+  const letters = [...document.querySelectorAll("#roll span")].map((s) => [...s.children]);
+  const tween = (to) => { const t0 = performance.now(); letters.forEach((pair, i) => { const from = parseFloat(pair[0].dataset.y || "0"); const step = (now) => { const p = Math.max(0, Math.min(1, (now - t0 - i * 40) / 400)); const e = 1 - Math.pow(1 - p, 3); const y = from + (to - from) * e; pair.forEach((el) => { el.style.transform = "translateY(" + y.toFixed(2) + "px)"; el.dataset.y = y; }); if (p < 1) requestAnimationFrame(step); }; requestAnimationFrame(step); }); };
+  const roll = document.getElementById("roll"); roll.addEventListener("mouseenter", () => tween(-24)); roll.addEventListener("mouseleave", () => tween(0)); }</script></body></html>`);
 // hover effects run by scripts: GSAP zooming a card's picture, a class added on hover (its CSS fades the colour),
 // a plain onmouseenter handler drawing a line in; a static element next to them
 writeFileSync(join(outdir, "hover.html"), `<!doctype html><html><head><style>body{margin:0;font:16px sans-serif} .card{width:300px;height:200px;overflow:hidden;margin:40px;cursor:pointer} .card img{display:block;width:300px;height:200px} .btn{display:inline-block;padding:12px 20px;background-color:rgb(0,0,255);color:#fff;transition:background-color .3s ease;margin:40px} .btn.is-hover{background-color:rgb(255,0,0)} .lnk{position:relative;display:inline-block;margin:40px;padding-bottom:4px} .lnk .line{position:absolute;left:0;bottom:0;height:2px;width:0;background:#000} .card2{width:300px;height:200px;overflow:hidden;margin:40px} .card2 img{display:block;width:300px;height:200px;transition:transform .4s ease} .card2.is-hover img{transform:scale(1.2)}</style></head><body>
@@ -219,6 +231,15 @@ writeFileSync(join(outdir, "pinwords.html"), `<!doctype html><html><head><style>
 writeFileSync(join(outdir, "pintimed.html"), `<!doctype html><html><head><style>body{margin:0;font:40px sans-serif} .tall{height:1500px} #pts{height:3000px} .pin{position:sticky;top:0;height:900px;display:flex;align-items:center;padding:0 80px} #ptp{margin:0} #ptp span{display:inline-block;margin-right:12px;opacity:0;transform:translate(0px, 20px)}</style></head><body>
 <div class="tall"></div><section id="pts"><div class="pin"><p id="ptp"><span id="pt0">A</span><span id="pt1">precise</span><span id="pt2">system</span><span id="pt3">of</span><span id="pt4">decisions</span><span id="pt5">made</span><span id="pt6">to</span><span id="pt7">last</span></p></div></section><div class="tall"></div><div class="tall"></div>
 <script>{ const ws = [...document.querySelectorAll("#ptp span")]; let started = false; addEventListener("scroll", () => { if (started && scrollY < 2000) { started = false; ws.forEach((w) => { w.style.opacity = "0"; w.style.transform = "translate(0px, 20px)"; }); } if (started || scrollY < 2100) return; started = true; const t0 = performance.now(); const f = (t) => { let more = false; ws.forEach((w, i) => { const p = Math.max(0, Math.min(1, (t - t0 - i * 80) / 600)); const e = 1 - Math.pow(1 - p, 3); w.style.opacity = e.toFixed(3); w.style.transform = "translate(0px, " + (20 * (1 - e)).toFixed(2) + "px)"; if (p < 1) more = true; }); if (more) requestAnimationFrame(f); }; requestAnimationFrame(f); }); }</script></body></html>`);
+// pinned sections, two kinds of change while the section holds still: steps stacked in one place handing over as you
+// scroll (busybox.io's process: the first only goes off, the last only comes on) — and a title with its text coming
+// in once at a point of the pinned scroll, staying (santalarch.com): steps follow the scroll, the title is an entrance
+writeFileSync(join(outdir, "heldsteps.html"), `<!doctype html><html><head><style>body{margin:0;font:40px sans-serif} .tall{height:1500px} #hsb{height:3600px} #hsa{height:2400px} .pin{position:sticky;top:0;height:900px;position:sticky} .stack{position:relative;margin:200px 80px;height:300px} .step{position:absolute;inset:0;background:#dde;opacity:0} .step.on{opacity:1} #hst,#hsp{opacity:0;transition:opacity .5s;margin:120px 80px 0} #hst.in,#hsp.in{opacity:1}</style></head><body>
+<div class="tall"></div><section id="hsb"><div class="pin"><div class="stack"><div class="step on" id="st0">One</div><div class="step" id="st1">Two</div><div class="step" id="st2">Three</div></div></div></section>
+<div class="tall"></div><section id="hsa"><div class="pin"><h2 id="hst">Bold presence</h2><p id="hsp">A clear visual position, formed through precision</p></div></section><div class="tall"></div><div class="tall"></div>
+<script>{ const st = [...document.querySelectorAll(".step")]; const t = document.getElementById("hst"), pp = document.getElementById("hsp");
+addEventListener("scroll", () => { const p = (scrollY - 1500) / 2700; const k = p < 1 / 3 ? 0 : p < 2 / 3 ? 1 : 2; st.forEach((e, i) => e.classList.toggle("on", i === k));
+  if (scrollY > 7000) { t.classList.add("in"); pp.classList.add("in"); } else if (scrollY < 6900) { t.classList.remove("in"); pp.classList.remove("in"); } }); }</script></body></html>`);
 // a wheel of picture cards turned by the scroll in depth, eased (framer.com's ImageWheel: each card goes round —
 // left, right and back again — as you scroll past): every card follows the scroll in the copy, not just some
 writeFileSync(join(outdir, "wheel.html"), `<!doctype html><html><head><style>body{margin:0} .tall{height:1500px} #wh{position:relative;height:700px;perspective:900px} #wh div{position:absolute;left:50%;top:50%;width:145px;height:145px;margin:-72px;background:#8ab;border-radius:20px}</style></head><body>
@@ -655,7 +676,7 @@ try {
   const st = (el) => (el ? el.getAttribute("style") || "" : "");
   // a ticker moved by a script every frame (no GSAP involved)
   const rafm = doc.querySelector("#rafm"), rd = Number((/--sl-in-d: ?(\d+)ms/.exec(st(rafm)) || [])[1] || 0);
-  ok(rafm?.hasAttribute("data-sl-loop") && rd > 7000 && rd < 13000 && /-600, 0\)/.test(g.html), `a ticker moved by a script every frame is measured and looped with CSS (one repeat = 600 px, ${rd} ms ≈ 10 s)`);
+  ok(rafm?.hasAttribute("data-sl-loop") && rd > 7000 && rd < 13000 && /-600, 0\)/.test(g.html), `a ticker moved by a script every frame is measured and looped with CSS (one repeat = 600 px, ${rd} ms ≈ 10 s; speeds seen ${(g.stats?.marqueeSpeeds || []).join(" · ")} px/s)`);
   const sws = [...doc.querySelectorAll(".sw")];
   ok(sws.length === 8 && sws.filter((w) => w.hasAttribute("data-sl-scroll")).length >= 6, `words that light up as you scroll are replayed on the scroll position (${sws.filter((w) => w.hasAttribute("data-sl-scroll")).length}/8)`);
   // a reveal driven by a class on the section around it (the child's own class / style never change)
@@ -777,6 +798,13 @@ for (const variant of ["", "#bundled"]) {
   const moving = ws.filter((w) => w.hasAttribute("data-sl-scroll") || w.hasAttribute("data-sl-reveal"));
   const css = (pc.html || "").match(/@keyframes sl-scroll-s\d+ \{[^@]*?opacity: 0[^@]*?opacity: 1/g) || [];
   ok(ws.length === 11 && moving.length >= 9 && css.length >= 9, `words a script splits a pinned text into as it comes in, then lights up as you scroll through it, are each scrubbed on the scroll in the copy (${moving.length}/${ws.length} words moving, ${css.length} fade-in timelines, ${pc.stats?.lateBorn || 0} late-made elements)`);
+}
+{ const hc = await capture(synthUrl.replace("page.html", "heldsteps.html"), {}, 500).catch((e) => ({ html: "", error: String(e) }));
+  const d = new JSDOM(hc.html || "<html></html>").window.document;
+  const steps = ["#st0", "#st1", "#st2"].map((q) => d.querySelector(q));
+  ok(steps.every((e) => e && e.hasAttribute("data-sl-scroll")), `steps stacked in a pinned section, handing over as you scroll, all follow the scroll — the first that only goes off and the last that only comes on too (${steps.map((e) => (e && e.hasAttribute("data-sl-scroll") ? "scroll" : "—")).join(" · ")})`);
+  const ent = ["#hst", "#hsp"].map((q) => d.querySelector(q));
+  ok(ent.every((e) => e && !e.hasAttribute("data-sl-scroll") && (e.hasAttribute("data-sl-in-at") || e.hasAttribute("data-sl-reveal") || e.hasAttribute("data-sl-in"))), `…but a title and its text coming in once while their section is pinned are an entrance, not scrubbed by the scroll (${ent.map((e) => (e ? (e.hasAttribute("data-sl-scroll") ? "scroll" : e.hasAttribute("data-sl-in-at") ? "in-at " + e.getAttribute("data-sl-in-at") : e.hasAttribute("data-sl-reveal") ? "reveal" : e.hasAttribute("data-sl-in") ? "in" : "none") : "missing")).join(" · ")})`);
 }
 { const pc = await capture(synthUrl.replace("page.html", "pintimed.html"), {}, 500).catch((e) => ({ html: "", error: String(e) }));
   const d = new JSDOM(pc.html || "<html></html>").window.document;
@@ -979,6 +1007,17 @@ for (const withMarks of [true, false]) {
     ok(/^1\.00\//.test(rest) && /^1\.15\//.test(on) && /^1\.00\//.test(off), `…in the copy, a real pointer over the card zooms the picture and leaving brings it back (${rest} → ${on} → ${off})`);
     c.close(); await getJSON(`/json/close/${t.id}`).catch(() => {});
   }
+}
+{ const fc = await capture(synthUrl.replace("page.html", "fanhover.html"), {}, 800).catch((e) => ({ html: "", error: String(e) }));
+  const d = new JSDOM(fc.html || "<html></html>").window.document;
+  const css = d.querySelector("style[data-sl-hover-motion]")?.textContent || "";
+  const cards = [0, 1, 2, 3].map((i) => ({ h: d.querySelector(`#fa${i}`)?.getAttribute("data-sl-hov"), t: d.querySelector(`#fp${i}`)?.getAttribute("data-sl-hovt") }));
+  const zooms = cards.filter((c) => c.h && c.t && new RegExp(`\\[data-sl-hov="${c.h}"\\]:hover \\[data-sl-hovt="${c.t}"\\] \\{ transform: matrix\\(1\\.3, 0, 0, 1\\.3, 0, 0\\)`).test(css));
+  ok(zooms.length === 4, `hovers a component runs with one state for all its items (a card fan) are tried one at a time: every card zooms its own picture (${zooms.length}/4; ${fc.stats?.hoverRetried || 0} retried)`);
+  const rh = d.querySelector("#roll")?.getAttribute("data-sl-hov");
+  const timing = [0, 1, 2, 3, 4].map((i) => { const t = d.querySelector(`#rl${i}`)?.getAttribute("data-sl-hovt"); const m = t ? new RegExp(`\\[data-sl-hovt="${t}"\\] \\{ transition: transform (\\d+)ms [^;]*?(?: (\\d+)ms)? !important`).exec(css) : null; return m ? { d: +m[1], delay: +(m[2] || 0) } : null; });
+  const ds = timing.filter(Boolean).map((x) => x.delay);
+  ok(!!rh && timing.every(Boolean) && ds.every((x, i) => i === 0 || x >= ds[i - 1]) && ds[4] - ds[0] >= 120 && ds[4] - ds[0] <= 220 && timing.every((x) => x.d >= 330 && x.d <= 480), `letters rolling up one by one on hover keep their stagger and pace in the copy (delays ${ds.join("/")} ms, durations ${timing.map((x) => x?.d).join("/")} ms)`);
 }
 { const lk = await capture(synthUrl.replace("page.html", "locked.html"), {}, 300);
   const d = new JSDOM(lk.html).window.document;

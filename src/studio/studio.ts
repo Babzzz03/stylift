@@ -542,6 +542,24 @@ function autoSize(f: HTMLIFrameElement, sc: Scope): void {
     applyZoom();
   }
 }
+/** Every animation run by the page's scroll (a ScrollTimeline — not an element's own view() timeline) held at its
+ *  start: on a time clock, paused at 0, so it shows the look it has at the top of the page. */
+function pageScrollAtTop(d: Document): void {
+  const W = d.defaultView as (Window & { ScrollTimeline?: { new (): unknown }; ViewTimeline?: { new (): unknown } }) | null;
+  if (!W?.ScrollTimeline || !d.getAnimations) return;
+  for (const a of d.getAnimations()) {
+    const tl = a.timeline as unknown;
+    if (!tl || !(tl instanceof W.ScrollTimeline) || (W.ViewTimeline && tl instanceof W.ViewTimeline)) continue;
+    try {
+      a.timeline = d.timeline;
+      a.effect?.updateTiming({ duration: 1000, delay: 0, iterations: 1, fill: "both" });
+      a.pause();
+      a.currentTime = 0;
+    } catch {
+      /* an animation the browser won't move to another clock */
+    }
+  }
+}
 function wireFrame(f: HTMLIFrameElement, sc: Scope): void {
   const d = f.contentDocument;
   if (!d) return;
@@ -560,6 +578,9 @@ function wireFrame(f: HTMLIFrameElement, sc: Scope): void {
   d.fonts?.ready.then(() => autoSize(f, sc)).catch(() => {});
   setTimeout(() => autoSize(f, sc), 1500);
   setTimeout(() => measureInnerScroll(f, sc), 900);
+  // motion tied to the page's scroll, on a canvas that never scrolls: shown as at the top of the page (Chrome jumps
+  // a scroll timeline with nothing to scroll to its end — monodrift.framer.website's hero panel sat slid away)
+  for (const ms of [0, 400, 1500, 4000]) setTimeout(() => pageScrollAtTop(d), ms);
   const st = d.createElement("style");
   st.setAttribute("data-sl-editor", "");
   st.textContent = EDITOR_CSS;

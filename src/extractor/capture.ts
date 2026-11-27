@@ -99,6 +99,10 @@ export interface CaptureStats {
   pinned?: number;
   /** hover effects run by the page's scripts, recorded and replayed as CSS :hover */
   hoverMotion?: number;
+  /** hover candidates tried again one at a time (a component with one hover state for all its items) */
+  hoverRetried?: number;
+  /** each script-moved ticker's measured speeds (px/s), slowest first — the evidence for its loop length */
+  marqueeSpeeds?: string[];
   /** reveals replayed over their own measured time (duration, stagger delay, easing) as they come into view */
   timedReveals?: number;
   /** content switched on and off as the page scrolled (an active list item, posters taking turns), replayed on the scroll position */
@@ -1479,19 +1483,46 @@ ${out.join("\n")}
         const n = m[2].split(",").map(parseFloat);
         return m[1] ? n[12] : n[4];
       };
+      // (only while the browser is really drawing: a busy computer starves its frames — a script's ticker then
+      // sits still and jumps ahead to catch up inside one look, measured 25× too fast)
+      let frames = 0, lastFrame = performance.now(), framesOn = strips.size > 0;
+      // The strips being looked at, followed frame by frame: the way each moved since the look began, a jump back
+      // by one repeat (the ticker wrapping round, -599 px → 0 px) taken out — a look spanning the wrap otherwise
+      // reads as a fast run the other way.
+      type Look = { t: number; f: number; last: number; moved: number; dist: number };
+      let looking: Map<HTMLElement, Look> | null = null;
+      const follow = (el: HTMLElement, a: Look) => {
+        const x = stripX(el);
+        let dx = x - a.last;
+        if (Math.abs(dx) > a.dist / 2) dx -= Math.sign(dx) * a.dist;
+        a.moved += dx;
+        a.last = x;
+      };
+      const frameTick = () => {
+        frames++;
+        lastFrame = performance.now();
+        if (looking) for (const [el, a] of looking) follow(el, a);
+        if (framesOn) requestAnimationFrame(frameTick);
+      };
+      if (framesOn) requestAnimationFrame(frameTick);
       const stripsBefore = () => {
-        const at = new Map<HTMLElement, { x: number; t: number }>();
-        for (const el of strips.keys()) {
+        const at = new Map<HTMLElement, Look>();
+        if (performance.now() - lastFrame > 100) return at;
+        for (const [el, st] of strips) {
           const r = el.getBoundingClientRect();
-          if (r.bottom > 0 && r.top < innerHeight) at.set(el, { x: stripX(el), t: performance.now() });
+          const x = stripX(el);
+          if (r.bottom > 0 && r.top < innerHeight) at.set(el, { t: performance.now(), f: frames, last: x, moved: 0, dist: st.dist });
         }
+        looking = at;
         return at;
       };
-      const stripsAfter = (at: Map<HTMLElement, { x: number; t: number }>) => {
+      const stripsAfter = (at: Map<HTMLElement, Look>) => {
+        looking = null;
         for (const [el, a] of at) {
           const dt = performance.now() - a.t;
-          if (dt < 150) continue;
-          strips.get(el)!.v.push(((stripX(el) - a.x) / dt) * 1000);
+          if (dt < 150 || frames - a.f < dt / 50 || performance.now() - lastFrame > 100) continue;
+          follow(el, a);
+          strips.get(el)!.v.push((a.moved / dt) * 1000);
         }
       };
       // Never stop short of the bottom: sections never scrolled to never get their
@@ -1575,13 +1606,18 @@ ${out.join("\n")}
         }
       }
       if (y < docH() - innerHeight) warnings.push("The page is very long or slow: the scroll pass stopped before the bottom, so effects further down may be missing.");
+      framesOn = false;
       for (const [el, st] of strips) {
         // steady: moving the same way at a similar speed at every look (a wrap-around jump is one odd sample)
         const vs = st.v.filter((v) => Math.abs(v) >= 8);
         if (!vs.length || el.hasAttribute("data-sl-gsap-loop") || getComputedStyle(el).animationName !== "none") continue;
         const same = vs.filter((v) => Math.sign(v) === Math.sign(vs[0]));
         if (same.length < Math.max(1, vs.length - 1)) continue;
-        const speed = same.reduce((a, b) => a + Math.abs(b), 0) / same.length;
+        // (a ticker that stalled and caught up inside one look reads too fast, never too slow: the lower quartile of
+        // the looks, not their mean — a true ticker's looks all agree anyway)
+        const speeds = same.map(Math.abs).sort((a, b) => a - b);
+        const speed = speeds[Math.floor((speeds.length - 1) / 4)];
+        (stats.marqueeSpeeds = stats.marqueeSpeeds || []).push(speeds.map((v) => Math.round(v)).join("/"));
         const dir = Math.sign(same[0]);
         const rest = { o: "1", tr: "none", s: "none", r: "none", fi: "none", c: "none" };
         const a = `matrix(1, 0, 0, 1, ${dir < 0 ? 0 : -Math.round(st.dist)}, 0)`, b = `matrix(1, 0, 0, 1, ${dir < 0 ? -Math.round(st.dist) : 0}, 0)`;
@@ -1883,6 +1919,69 @@ ${out.join("\n")}
         stats.waapiEntrances = (stats.waapiEntrances || 0) + 1;
       }
     }
+    // One-way changes made while HELD in place on screen (see heldChange in the switch branch): which way each went
+    // (+1 coming on: shown more / moved home; −1 going off) at which stop, and the screen box it was in. A held change
+    // is a pinned section's steps handing over — one going off where another comes on, in the same place, at the
+    // same stop (busybox.io's process steps). A text coming in by itself while its section is held (santalarch.com's
+    // titles and words, set off once at a point of the pinned scroll) hands over to nothing: a pinned entrance.
+    type HeldEvent = { el: Element; y: number; dir: number; l: number; r: number; t: number; b: number };
+    const heldByY = new Map<number, HeldEvent[]>();
+    if (o.scrollLinked) {
+      for (const [el, warr] of switchSamples) {
+        if (warr.length < 3 || !el.isConnected) continue;
+        const pts = Array.from(new Map(warr.map((p) => [p.y, p])).values()).sort((a, b) => a.y - b.y);
+        const rr = el.getBoundingClientRect();
+        if (rr.width < 4 || rr.height < 4) continue;
+        const top = rr.top + scrollY;
+        const ops = pts.map((p) => p.op), tys = pts.map((p) => matrixNums(p.tf));
+        for (let i = 1; i < pts.length; i++) {
+          const at = pts[i].top;
+          if (typeof at !== "number" || !isFinite(at) || Math.abs(at - (top - pts[i].y)) <= innerHeight * 0.25) continue;
+          if (!(at < innerHeight && at + rr.height > 0)) continue;
+          let dir = 0;
+          if (Math.abs(ops[i] - ops[i - 1]) > 0.3) dir = Math.sign(ops[i] - ops[i - 1]);
+          else if (tys[i].length === 6 && tys[i - 1].length === 6 && Math.abs(tys[i][5] - tys[i - 1][5]) > 12) dir = Math.abs(tys[i][5]) < Math.abs(tys[i - 1][5]) ? 1 : -1;
+          if (!dir) continue;
+          const ev = { el, y: pts[i].y, dir, l: rr.left, r: rr.right, t: at, b: at + rr.height };
+          const list = heldByY.get(ev.y);
+          if (list) list.push(ev); else heldByY.set(ev.y, [ev]);
+        }
+      }
+    }
+    // the same in a CSS-sticky section (its own samples; held by definition): boxes where they sit in the page, which
+    // the section moves as one
+    const stickyByY = new Map<number, HeldEvent[]>();
+    if (o.scrollLinked) {
+      for (const [el, sarr] of stickySamples) {
+        if (sarr.length < 3 || !el.isConnected) continue;
+        const pts = Array.from(new Map(sarr.map((p) => [p.y, p])).values()).sort((a, b) => a.y - b.y);
+        const rr = el.getBoundingClientRect();
+        if (rr.width < 4 || rr.height < 4) continue;
+        const ops = pts.map((p) => p.op), tys = pts.map((p) => matrixNums(p.tf));
+        for (let i = 1; i < pts.length; i++) {
+          let dir = 0;
+          if (Math.abs(ops[i] - ops[i - 1]) > 0.3) dir = Math.sign(ops[i] - ops[i - 1]);
+          else if (tys[i].length === 6 && tys[i - 1].length === 6 && Math.abs(tys[i][5] - tys[i - 1][5]) > 12) dir = Math.abs(tys[i][5]) < Math.abs(tys[i - 1][5]) ? 1 : -1;
+          if (!dir) continue;
+          const ev = { el, y: pts[i].y, dir, l: rr.left, r: rr.right, t: rr.top + scrollY, b: rr.bottom + scrollY };
+          const list = stickyByY.get(ev.y);
+          if (list) list.push(ev); else stickyByY.set(ev.y, [ev]);
+        }
+      }
+    }
+    const handedOver = (el: Element, y: number, byY = heldByY): boolean => {
+      const here = byY.get(y) || [];
+      const mine = here.filter((e) => e.el === el);
+      for (const m of mine) {
+        for (const o2 of here) {
+          if (o2.el === el || o2.dir === m.dir || o2.el.contains(el) || el.contains(o2.el)) continue;
+          const w = Math.min(m.r, o2.r) - Math.max(m.l, o2.l), h = Math.min(m.b, o2.b) - Math.max(m.t, o2.t);
+          const small = Math.min((m.r - m.l) * (m.b - m.t), (o2.r - o2.l) * (o2.b - o2.t));
+          if (w > 0 && h > 0 && w * h >= small * 0.5) return true; // in the same place
+        }
+      }
+      return false;
+    };
     // a row's children in a pinned section: at how many different stops they came in (half way to their end look)
     const rowSpreadOf = new Map<Element, number>();
     const rowSpread = (row: Element): number => {
@@ -1945,7 +2044,10 @@ ${out.join("\n")}
           const tb = tweenBest.get(el);
           const timedRow = ofRow && !!tb && tb.last - tb.first < 2500 && rowSpread(el.parentElement!) <= 2 && !bothWays(ops, 0.15) && !bothWays(ty, 8);
           const r = el.getBoundingClientRect();
-          if (!timedRow && (opRange > 0.3 || tRange > 12) && (bothWays(ops, 0.15) || bothWays(ty, 8) || scrubbed) && ((r.width >= 20 && r.height >= 10) || (ofRow && r.width >= 4 && r.height >= 4))) {
+          // …or steps stacked in one place handing over: going one way at a stop where another, in the same place,
+          // goes the other (the first step only goes off, the last only comes on)
+          const handover = pts.some((p, i) => i > 0 && handedOver(el, p.y, stickyByY));
+          if ((handover || (!timedRow && (bothWays(ops, 0.15) || bothWays(ty, 8) || scrubbed))) && (opRange > 0.3 || tRange > 12) && ((r.width >= 20 && r.height >= 10) || (ofRow && r.width >= 4 && r.height >= 4))) {
             if (cls === null) el.removeAttribute("class"); else el.setAttribute("class", cls);
             el.setAttribute("style", style || "");
             const id = `s${linked.length + 1}`;
@@ -2038,7 +2140,7 @@ ${out.join("\n")}
             for (let i = 1; i < vals.length; i++) {
               if (Math.abs(vals[i] - vals[i - 1]) <= tol) continue;
               const at = pts[i].top;
-              if (typeof at === "number" && isFinite(at) && Math.abs(at - (top - pts[i].y)) > innerHeight * 0.25 && onScreen(pts[i].y)) return true;
+              if (typeof at === "number" && isFinite(at) && Math.abs(at - (top - pts[i].y)) > innerHeight * 0.25 && onScreen(pts[i].y) && handedOver(el, pts[i].y)) return true;
             }
             return false;
           };
@@ -4087,14 +4189,9 @@ ${out.join("\n")}
     };
     const secs = (v: string) => v.split(",").map((x) => (/ms$/.test(x.trim()) ? parseFloat(x) / 1000 : parseFloat(x) || 0));
     let n = 0;
-    while (cands.length && performance.now() - tStart < budget) {
-      const batch: Element[] = [];
-      const later: Element[] = [];
-      for (const c of cands) {
-        if (batch.length < 16 && !batch.some((b) => b.contains(c) || c.contains(b))) batch.push(c);
-        else later.push(c);
-      }
-      cands = later;
+    // hovered alongside others in a batch, and nothing changed in them
+    const silent: Element[] = [];
+    const runBatch = async (batch: Element[], pointer: boolean): Promise<void> => {
       // each candidate's parts, as they look now
       const owner = new Map<Element, Element>();
       const before = new Map<Element, string[]>();
@@ -4110,6 +4207,13 @@ ${out.join("\n")}
       // every style / class change from here on, with its first old value (to put everything back)
       const old = new Map<Element, { style?: string | null; cls?: string | null }>();
       const lastOf = new Map<Element, number>();
+      // when each part's look started and stopped changing (a script's tween writes its style every frame — and
+      // sometimes on every part at once, the delayed ones staying put for now): its own pace, its place in a stagger
+      const firstAt = new Map<Element, number>(), lastAt = new Map<Element, number>(), seenLook = new Map<Element, string>();
+      const LOOKS = ["transform", "translate", "scale", "rotate", "opacity", "clip-path", "color"].map((p) => PROPS.indexOf(p));
+      // (by value: "none" is the identity matrix, sub-pixel and rounding noise is no change)
+      const sameLook = (v: string) => v.replace(/^none$/, "matrix(1, 0, 0, 1, 0, 0)").replace(/-?\d*\.?\d+(?:e-?\d+)?/g, (x) => String(Math.round(parseFloat(x) * 50) / 50));
+      const lookOf = (vals: string[]) => LOOKS.map((i) => sameLook(vals[i])).join("|");
       let last = performance.now();
       const mo = new MutationObserver((recs) => {
         const now = performance.now();
@@ -4123,6 +4227,16 @@ ${out.join("\n")}
           if (r.attributeName === "class" && !("cls" in o0)) o0.cls = r.oldValue;
           const c = owner.get(t);
           if (c) lastOf.set(c, now);
+          const b0 = before.get(t);
+          if (b0) {
+            const csT = getComputedStyle(t);
+            const v = LOOKS.map((i) => sameLook(csT.getPropertyValue(PROPS[i]))).join("|");
+            if (v !== lookOf(b0)) {
+              if (!firstAt.has(t)) firstAt.set(t, now);
+              if (seenLook.get(t) !== v) lastAt.set(t, now);
+            }
+            seenLook.set(t, v);
+          }
         }
       });
       mo.observe(document.documentElement, { attributes: true, subtree: true, attributeFilter: ["style", "class"], attributeOldValue: true });
@@ -4148,7 +4262,7 @@ ${out.join("\n")}
         // else only the parts a script styled. (Changes outside its own parts — a cursor follower — are
         // not hover effects of it.)
         const mine = Array.from(old.keys()).filter((el) => owner.get(el) === c && !restless.has(el));
-        if (!mine.length) continue;
+        if (!mine.length) { if (batch.length > 1) silent.push(c); continue; }
         const viaClass = mine.some((el) => "cls" in old.get(el)!);
         const look = (el: Element) => getComputedStyle(el);
         const peak = new Map<Element, string[]>();
@@ -4165,7 +4279,8 @@ ${out.join("\n")}
           const props: [string, string][] = [];
           PROPS.forEach((p, i) => {
             const now = pk[i];
-            if (now === b[i]) return;
+            // (by value: a script writing scale(1) over "none" changed nothing)
+            if (now === b[i] || sameLook(now) === sameLook(b[i])) return;
             // inherited from a parent that changed the same way (text colour, visibility): the parent's rule does it
             if (/^(color|visibility|letter-spacing)$/.test(p) && up && upB && up[i] === now && upB[i] === b[i]) return;
             if (p === "width") {
@@ -4177,10 +4292,18 @@ ${out.join("\n")}
           });
           if (props.length) changed.push({ el, props });
         }
+        // nothing really changed in it: with others hovered at the same time, it may be waiting its turn
+        if (!changed.length && batch.length > 1) silent.push(c);
+        for (const el of parts) dbg(el, `hover${batch.length === 1 ? " (alone)" : ""}: ${PROPS.map((p, i) => (before.get(el)![i] !== peak.get(el)![i] ? `${p} ${before.get(el)![i]} → ${peak.get(el)![i]}` : "")).filter(Boolean).join("; ") || "no change"} (first ${firstAt.has(el) ? Math.round(firstAt.get(el)! - t1) : "-"} ms, last ${lastAt.has(el) ? Math.round(lastAt.get(el)! - t1) : "-"} ms)`);
         if (!changed.length || changed.length > 30) continue;
         const id = `h${++n}`;
         c.setAttribute(HOV_ATTR, id);
         const span = Math.max(0, (lastOf.get(c) || t1) - t1);
+        // a stagger: the parts started one after another (letters rolling up one by one — Framer's text effects:
+        // ~30 ms apart on mirelle.framer.media) — each keeps its own start and pace, counted from the first
+        const starts = changed.map((ch) => firstAt.get(ch.el)).filter((x): x is number => x !== undefined);
+        const start0 = starts.length ? Math.min(...starts) : t1;
+        const staggered = starts.length >= 3 && Math.max(...starts) - start0 > 40;
         changed.forEach((ch, k) => {
           const tid = `${id}-${k + 1}`;
           ch.el.setAttribute(HOVT_ATTR, tid);
@@ -4192,15 +4315,17 @@ ${out.join("\n")}
           const covered = (p: string) => tprop.some((tp, i) => (tp === "all" || tp === p) && (tdur[i % tdur.length] || 0) > 0);
           const own = ch.props.filter(([p]) => !covered(p)).map(([p]) => p);
           if (own.length) {
-            const d = Math.max(180, Math.min(1200, Math.round(span || 400)));
+            const fa = firstAt.get(ch.el), la = lastAt.get(ch.el);
+            const delay = staggered && fa !== undefined ? Math.round(fa - start0) : 0;
+            const d = Math.max(180, Math.min(1200, Math.round(staggered && fa !== undefined && la !== undefined && la - fa > 60 ? la - fa : span || 400)));
             const keep = tprop.map((tp, i) => ((tdur[i % tdur.length] || 0) > 0 ? `${tp} ${cs.transitionDuration.split(",")[i % tdur.length].trim()} ${cs.transitionTimingFunction.split(/,(?![^(]*\))/)[i % tdur.length]?.trim() || "ease"} ${cs.transitionDelay.split(",")[i % tdur.length]?.trim() || "0s"}` : "")).filter(Boolean);
-            hoverCss.push(`[${HOVT_ATTR}="${tid}"] { transition: ${[...keep, ...own.map((p) => `${p} ${d}ms cubic-bezier(.22,1,.36,1)`)].join(", ")} !important; }`);
+            hoverCss.push(`[${HOVT_ATTR}="${tid}"] { transition: ${[...keep, ...own.map((p) => `${p} ${d}ms cubic-bezier(.22,1,.36,1)${delay ? ` ${delay}ms` : ""}`)].join(", ")} !important; }`);
           }
         });
       }
       // Pointer effects: the pointer moved inside each (right of and below its middle). A part that shifts
       // toward it is magnetic (the share of the pointer's offset it follows); one that turns in 3D is tilted.
-      {
+      if (pointer) {
         const tfBefore = new Map<Element, string>();
         for (const [el] of owner) tfBefore.set(el, getComputedStyle(el).transform);
         const offs = new Map<Element, { x: number; y: number; w: number; h: number }>();
@@ -4270,6 +4395,31 @@ ${out.join("\n")}
         if ("style" in o0) { if (o0.style == null) el.removeAttribute("style"); else el.setAttribute("style", o0.style); }
         if ("cls" in o0) { if (o0.cls == null) el.removeAttribute("class"); else el.setAttribute("class", o0.cls); }
       }
+    };
+    while (cands.length && performance.now() - tStart < budget) {
+      const batch: Element[] = [];
+      const later: Element[] = [];
+      for (const c of cands) {
+        if (batch.length < 16 && !batch.some((b) => b.contains(c) || c.contains(b))) batch.push(c);
+        else later.push(c);
+      }
+      cands = later;
+      await runBatch(batch, true);
+    }
+    // Hovers that answer one at a time: a component with ONE hover state for its items (a fanned stack of cards, a
+    // list lighting up one row) shows only the last of several hovered together — mirelle.framer.media's card fan
+    // recorded 1 of 7. The quiet ones sitting with one that answered (a shared ancestor ≤ 4 levels up) are tried
+    // again, each alone.
+    {
+      const answered = Array.from(document.querySelectorAll(`[${HOV_ATTR}]`));
+      const near = (a: Element, b: Element) => { let p = a.parentElement; for (let k = 0; k < 4 && p; k++, p = p.parentElement) if (p.contains(b)) return true; return false; };
+      const retry = silent.filter((c) => c.isConnected && !c.hasAttribute(HOV_ATTR) && answered.some((h) => h !== c && near(c, h))).slice(0, 12);
+      const tRetry = performance.now();
+      for (const c of retry) {
+        if (performance.now() - tRetry > 30000) break;
+        await runBatch([c], false);
+      }
+      if (retry.length) stats.hoverRetried = retry.length;
     }
     if (n) stats.hoverMotion = n;
   }

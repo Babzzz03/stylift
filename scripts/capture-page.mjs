@@ -2,6 +2,7 @@
 // chosen elements' opening tags (and optionally the copy's StyleLift <style> blocks) and the stats.
 //   node scripts/capture-page.mjs <page.html | https://…> id1,id2 [--css] [--out copy.html] [--sel "css selector"] [--n 6]
 //     [--why "css selector"]  (what the capture decided about those elements, and why)
+//     [--src dir]  (the engine from another source tree — an older commit's src/, for side-by-side runs)
 // (a URL is opened as it is — the site itself, without the extension's page-start recorder or live 3D)
 import { build } from "esbuild";
 import { spawn } from "node:child_process";
@@ -12,11 +13,12 @@ import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 const args = process.argv.slice(2);
 const flag = (n) => { const i = args.indexOf(n); return i >= 0 ? args[i + 1] : null; };
-const [PAGE, IDS = ""] = args.filter((a, i) => !a.startsWith("--") && !["--out", "--sel", "--n", "--why"].includes(args[i - 1]));
+const [PAGE, IDS = ""] = args.filter((a, i) => !a.startsWith("--") && !["--out", "--sel", "--n", "--why", "--src"].includes(args[i - 1]));
 const REMOTE = /^https?:\/\//.test(PAGE);
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const out = mkdtempSync(join(tmpdir(), "sl-cp-"));
-await build({ entryPoints: { cap: "src/extractor/capture.ts", settle: "src/extractor/settle.ts" }, outdir: out, bundle: true, format: "esm", platform: "neutral", target: "es2021", logLevel: "silent" });
+const SRC = flag("--src") || "src";
+await build({ entryPoints: { cap: `${SRC}/extractor/capture.ts`, settle: `${SRC}/extractor/settle.ts` }, outdir: out, bundle: true, format: "esm", platform: "neutral", target: "es2021", logLevel: "silent" });
 const { capturePage } = await import(pathToFileURL(join(out, "cap.js")));
 const { settleAnimations } = await import(pathToFileURL(join(out, "settle.js")));
 // --no-settle: capture without fast-forwarding the page's running animations first (to see what that step does)
@@ -27,7 +29,7 @@ await new Promise((r) => srv.listen(0, "127.0.0.1", r));
 const prof = mkdtempSync(join(tmpdir(), "sl-cp-p-"));
 const port = 9500 + Math.floor(Math.random() * 40);
 // --gpu: WebGL through the software renderer (a site that draws its hero with WebGL only makes its canvas when it can)
-const ch = spawn("/Applications/Google Chrome.app/Contents/MacOS/Google Chrome", ["--headless=new", `--remote-debugging-port=${port}`, `--user-data-dir=${prof}`, "--window-size=1440,900", "--autoplay-policy=no-user-gesture-required", ...(args.includes("--gpu") ? ["--enable-unsafe-swiftshader"] : []), "about:blank"]);
+const ch = spawn("/Applications/Google Chrome.app/Contents/MacOS/Google Chrome", ["--headless=new", `--remote-debugging-port=${port}`, `--user-data-dir=${prof}`, "--window-size=1440,900", "--autoplay-policy=no-user-gesture-required", ...(args.includes("--gpu") ? ["--enable-unsafe-swiftshader"] : []), ...(args.includes("--no-gpu") ? ["--disable-gpu"] : []), "about:blank"]);
 const done = (c) => { try { ch.kill("SIGKILL"); } catch {} srv.close(); setTimeout(() => { rmSync(prof, { recursive: true, force: true }); rmSync(out, { recursive: true, force: true }); process.exit(c); }, 300); };
 try {
   for (let i = 0; i < 200; i++) { try { await fetch(`http://127.0.0.1:${port}/json/version`); break; } catch { await sleep(200); } }

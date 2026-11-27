@@ -80,6 +80,22 @@ const wl2 = addWholeLayout(wl.html, pPage, "phone");
 const wd2 = new dom.window.DOMParser().parseFromString(wl2.html, "text/html");
 ok(wd2.querySelectorAll('[data-sl-layout="phone"]').length === 1 && wd2.querySelectorAll("style[data-sl-layouts-switch]").length === 1 && wd2.querySelectorAll('style[data-sl-layout-css="phone"]').length === 1, "re-adding replaces instead of duplicating");
 
+// Each capture numbers its animations from 1: a tablet layout's sl-scroll-s1 must not replace the desktop's (the
+// desktop hero of monodrift.framer.website slid by the tablet's numbers) — and the tablet layout keeps its own motion
+{
+  const motionCss = (x) => `<style data-sl-scroll-motion>@media (prefers-reduced-motion: no-preference) { @keyframes sl-scroll-s1 { 0% { transform: matrix(1, 0, 0, 1, ${x}, 0); } 100% { transform: matrix(1, 0, 0, 1, -500, 0); } } [data-sl-scroll="s1"] { animation: sl-scroll-s1 linear both; animation-timeline: scroll(root block); } @keyframes sl-in-g1 { from { opacity: ${x ? 0 : 0.5}; } } [data-sl-in="g1"] { animation: sl-in-g1 600ms both; } }</style>`;
+  const deskM = page(`<div class="ssr-variant hidden-tab hidden-ph"><section data-framer-name="Hero" data-sl-scroll="s1"><h1 data-sl-in="g1">Desk</h1></section></div>`, motionCss(0));
+  const tabM = page(`<div class="ssr-variant hidden-desk hidden-ph"><section data-framer-name="Hero" class="tab-hero" data-sl-scroll="s1"><h1 data-sl-in="g1">Tab</h1></section></div>`, motionCss(-80) + `<style>.tab-hero{color:red}</style>`);
+  const mm = mergeVariantCaptures(deskM, [tabM]);
+  const css = (mm.html.match(/<style[^>]*>[\s\S]*?<\/style>/g) || []).join("\n");
+  const defs = css.match(/@keyframes sl-scroll-s1 \{[^}]*\}/g) || [];
+  ok(defs.length === 1 && /matrix\(1, 0, 0, 1, 0, 0\)/.test(defs[0]) && (css.match(/@keyframes sl-in-g1 \{/g) || []).length === 1, `the desktop keeps its own animations (sl-scroll-s1 defined ${defs.length}×, starting at ${(/matrix\([^)]*\)/.exec(defs[0] || "") || [""])[0]})`);
+  const md = new dom.window.DOMParser().parseFromString(mm.html, "text/html");
+  const tabEl = md.querySelector(".tab-hero"), tabH = tabEl?.querySelector("h1");
+  const sid = tabEl?.getAttribute("data-sl-scroll"), gid = tabH?.getAttribute("data-sl-in");
+  ok(!!sid && sid !== "s1" && !!gid && gid !== "g1" && new RegExp(`@keyframes sl-scroll-${sid}\\s*\\{[^}]*-80`).test(css) && css.includes(`[data-sl-scroll="${sid}"]`) && css.includes(`[data-sl-in="${gid}"]`), `…and the tablet layout keeps its own, renamed apart, with their rules (${sid}, ${gid})`);
+}
+
 console.log(`\n${passed} passed, ${failures.length} failed`);
 if (failures.length) process.exit(1);
 console.log("Responsive variant merge verified ✓");
