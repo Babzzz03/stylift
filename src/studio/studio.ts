@@ -29,7 +29,8 @@ import {
   type Scope,
   type StyleEdits,
 } from "./model";
-import { deleteProject, getPage, getProject, getScenes, listProjects, savePage, saveProject, type SceneFiles, type StudioProject } from "../shared/projects";
+import { createSiteProject, deleteProject, getPage, getProject, getScenes, listProjects, newProjectId, savePage, saveProject, type SceneFiles, type StudioProject } from "../shared/projects";
+import { importFigmaDesign } from "./figma-import";
 import { addIslandTag, hasIslands, islandAttrs } from "../panel/islands";
 import { startFrameInterception, startPreview, type FrameSession } from "../panel/preview";
 import { buildFigmaBundle } from "../panel/figma-export";
@@ -4310,7 +4311,33 @@ async function showHome(): Promise<void> {
   homeEl.hidden = false;
   stage.hidden = true;
   const list = await listProjects();
-  homeEl.innerHTML = `<h1>${icon("grid", 20)}Your captures</h1><p>${list.length ? "Open a project to edit it in the canvas." : 'Nothing here yet. Open any website, then choose <b>Edit in Studio</b> in the StyleLift panel.'}</p><div class="cards"></div>`;
+  homeEl.innerHTML = `<h1>${icon("grid", 20)}Your captures</h1><p>${list.length ? "Open a project to edit it in the canvas." : 'Nothing here yet. Open any website, then choose <b>Edit in Studio</b> in the StyleLift panel — or open a design from Figma.'}</p><div class="home-actions"></div><div class="cards"></div>`;
+  // a design from Figma (saved by the StyleLift plugin's "Figma → StyleLift"): a project like any capture
+  {
+    const input = document.createElement("input");
+    input.type = "file";
+    input.accept = ".zip,application/zip";
+    input.hidden = true;
+    input.addEventListener("change", async () => {
+      const f = input.files?.[0];
+      input.value = "";
+      if (!f) return;
+      try {
+        toast("Opening the Figma design…");
+        const d = await importFigmaDesign(f);
+        const id = newProjectId();
+        const now = Date.now();
+        if (d.pages.length === 1) await saveProject({ id, url: d.url, title: d.title, html: d.pages[0].html, edits: {}, createdAt: now, updatedAt: now });
+        else await createSiteProject({ id, url: d.url, title: `${d.title} — ${d.pages.length} pages`, createdAt: now, updatedAt: now }, d.pages.map((p) => ({ url: p.url, path: p.path, title: p.title, html: p.html })));
+        location.search = `?id=${encodeURIComponent(id)}`;
+      } catch (e) {
+        toast(e instanceof Error ? e.message : String(e), true);
+      }
+    });
+    const btn = miniBtn("Open a Figma design", () => input.click(), false, "layers");
+    btn.title = "A .stylelift.zip saved in Figma by the StyleLift plugin (Figma → StyleLift): each frame becomes a page you can edit and export";
+    homeEl.querySelector(".home-actions")!.append(btn, input);
+  }
   const cards = homeEl.querySelector(".cards")!;
   for (const p of list) {
     const c = document.createElement("div");
