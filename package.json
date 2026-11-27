@@ -6,7 +6,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite build --watch",
-    "build": "node scripts/build-wp-plugin.mjs && node scripts/build-runtime.mjs && tsc --noEmit && vite build",
+    "build": "node scripts/build-wp-plugin.mjs && node scripts/build-runtime.mjs && node scripts/build-figma-plugin.mjs && tsc --noEmit && tsc -p figma-plugin && vite build",
     "typecheck": "tsc --noEmit",
     "icons": "node scripts/make-icons.mjs",
     "test": "node scripts/verify.mjs && node scripts/verify-component.mjs && node scripts/verify-edit.mjs && node scripts/verify-jsx.mjs && node scripts/verify-offline.mjs && node scripts/verify-project.mjs && node scripts/verify-site.mjs && node scripts/verify-studio-model.mjs && node scripts/verify-variants.mjs && node scripts/verify-wordpress.mjs && node scripts/verify-mirror.mjs && node scripts/verify-preview.mjs && node scripts/verify-publish.mjs && node scripts/verify-report.mjs && node scripts/verify-align.mjs && node scripts/verify-motion.mjs",
@@ -29,7 +29,7 @@
     "test:publish": "node scripts/verify-publish.mjs",
     "test:report": "node scripts/verify-report.mjs",
     "test:align": "node scripts/verify-align.mjs",
-    "build:test": "node scripts/build-wp-plugin.mjs && node scripts/build-runtime.mjs && vite build --outDir dist-test && touch dist-test/.metadata_never_index",
+    "build:test": "node scripts/build-wp-plugin.mjs && node scripts/build-runtime.mjs && node scripts/build-figma-plugin.mjs && vite build --outDir dist-test && touch dist-test/.metadata_never_index",
     "test:motion": "node scripts/verify-motion.mjs",
     "test:motion-roundtrip": "node scripts/verify-motion-roundtrip.mjs",
     "test:island-find": "node scripts/verify-island-find.mjs",
@@ -37,9 +37,11 @@
     "bench:motion": "node scripts/motion-bench.mjs",
     "test:islands-real": "node scripts/verify-islands-real.mjs",
     "test:studio-3d-real": "node scripts/verify-studio-3d-real.mjs",
-    "test:3d-compare": "node scripts/verify-3d-compare.mjs"
+    "test:3d-compare": "node scripts/verify-3d-compare.mjs",
+    "test:figma": "node scripts/verify-figma.mjs"
   },
   "devDependencies": {
+    "@figma/plugin-typings": "^1.143.0",
     "@types/chrome": "^0.0.268",
     "jsdom": "^29.1.1",
     "prettier": "^3.3.3",

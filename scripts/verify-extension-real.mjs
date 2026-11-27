@@ -17,7 +17,7 @@ import { setTimeout as sleep } from "node:timers/promises";
 const args = process.argv.slice(2);
 const flag = (n) => { const i = args.indexOf(n); return i >= 0 ? args[i + 1] : null; };
 const PAGES = Number(flag("--pages") || 6);
-// --only html,next,live,site — run just these buttons (a heavy site on a small machine)
+// --only html,next,live,site — run just these buttons (a heavy site on a small machine); "figma" adds This page → Figma
 const ONLY = (flag("--only") || "html,next,studio,live,site").split(",").map((x) => x.trim());
 const OUT = flag("--out") || mkdtempSync(join(tmpdir(), "sl-ext-real-"));
 const urls = args.filter((a, i) => !a.startsWith("--") && !["--pages", "--out", "--only", "--studio-eval"].includes(args[i - 1]));
@@ -204,6 +204,26 @@ for (const url of urls) {
     const html = ONLY.includes("html") ? await run("This page", "HTML (.zip)", /Exported HTML project/i, 600000) : null;
     if (html?.ok) { const d = unzip(html.file); const idx = existsSync(join(d, "index.html")) ? readFileSync(join(d, "index.html"), "utf8") : ""; html.check = { index: !!idx, scripts: (idx.match(/<script\b/g) || []).length, assets: existsSync(join(d, "assets")) ? globSync("assets/**/*.*", { cwd: d }).length : 0, css: existsSync(join(d, "styles.css")) }; if (!idx || !html.check.css) row.problems.push("HTML export is missing index.html or styles.css"); }
     if (html) row.exports.push(html);
+    // ── This page → Figma: the copy measured as Figma layers, packed with its pictures and the plugin ──
+    if (ONLY.includes("figma")) {
+      const fig = await run("This page", "Figma (.zip)", /Exported for Figma/i, 600000);
+      if (fig.ok) {
+        const d = unzip(fig.file);
+        let snap = null;
+        try { snap = JSON.parse(readFileSync(join(d, "figma.json"), "utf8")); } catch { /* checked below */ }
+        const pics = existsSync(join(d, "images")) ? readdirSync(join(d, "images")) : [];
+        const plugin = ["manifest.json", "dist/code.js", "dist/ui.html"].every((f) => existsSync(join(d, "figma-plugin", f)));
+        const kinds = new Set(pics.map((f) => f.split(".").pop()));
+        fig.check = { layers: snap?.stats?.nodes || 0, texts: snap?.stats?.texts || 0, autoLayout: snap?.stats?.autoLayout || 0, width: snap?.width, height: snap?.height, pictures: pics.length, listed: snap?.images?.length || 0, kinds: [...kinds].join(","), plugin, readme: existsSync(join(d, "README.txt")), url: snap?.url };
+        console.log(`      figma.json: ${fig.check.layers} layers (${fig.check.texts} texts, ${fig.check.autoLayout} Auto Layout) · ${fig.check.width}×${fig.check.height} · pictures ${fig.check.pictures}/${fig.check.listed} (${fig.check.kinds}) · plugin ${plugin ? "included" : "MISSING"}`);
+        if (!snap?.root || fig.check.layers < 20) row.problems.push(`Figma export: figma.json has ${fig.check.layers} layers`);
+        if (!plugin || !fig.check.readme) row.problems.push("Figma export is missing the plugin or README.txt");
+        if (fig.check.pictures < fig.check.listed * 0.8) row.problems.push(`Figma export packed ${fig.check.pictures} of ${fig.check.listed} pictures`);
+        if ([...kinds].some((k) => !/^(png|jpg|gif)$/.test(k))) row.problems.push(`Figma export has pictures Figma can't take: ${fig.check.kinds}`);
+        if (snap?.url !== url && !String(snap?.url || "").startsWith(new URL(url).origin)) row.problems.push(`Figma export says it's from ${snap?.url}`);
+      }
+      row.exports.push(fig);
+    }
     // ── Studio: the capture opened in the editor — every image and video must show on the artboard ──
     if (ONLY.includes("studio")) {
       await clickText("This page"); await sleep(300);

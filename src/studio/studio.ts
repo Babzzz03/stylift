@@ -32,6 +32,7 @@ import {
 import { deleteProject, getPage, getProject, getScenes, listProjects, savePage, saveProject, type SceneFiles, type StudioProject } from "../shared/projects";
 import { addIslandTag, hasIslands, islandAttrs } from "../panel/islands";
 import { startFrameInterception, startPreview, type FrameSession } from "../panel/preview";
+import { buildFigmaBundle } from "../panel/figma-export";
 import { buildHtmlProject, buildSiteProject, type FileMap } from "../panel/project";
 import { buildNextProject, buildNextSiteProject, buildReactViteProject } from "../panel/react-project";
 import { buildElementorTemplate } from "../panel/elementor";
@@ -2815,6 +2816,17 @@ async function exportAs(kind: string): Promise<void> {
     } else if (kind === "elementor") {
       const tpl = buildElementorTemplate(html, S.project.title || host);
       downloadBlob(JSON.stringify(tpl, null, 2), `${host}.elementor.json`, "application/json");
+    } else if (kind === "figma") {
+      // the page with its edits, laid out at the artboard size being edited, as Figma layers
+      const size = SCOPES.find((x) => x.id === S.scope) || SCOPES[0];
+      const files = await buildHtmlProject(html, url, { fetchText, fetchBytes: makeByteFetcher() }, host);
+      const b = await buildFigmaBundle(files, url, { width: size.width, height: size.height }, makeByteFetcher(), (t) => toast(t));
+      const zip: FileMap = {};
+      for (const e of b.entries) zip[e.name] = e.data;
+      const tag = size.id === "base" ? "" : `.${size.id}`;
+      downloadZip(zip, `${host}${tag}.figma.zip`);
+      toast(`Exported for Figma: ${b.snap.stats.nodes} layers at ${size.label} size${b.picturesMissing ? ` (${b.picturesMissing} picture(s) couldn't be packed)` : ""}. Open it with the StyleLift plugin — README.txt inside says how.`);
+      return;
     } else {
       const r = { fetchText, fetchBytes: makeByteFetcher() };
       // its 3D scenes kept live (the site's own code, see panel/islands.ts): HTML at the root, React / Next.js in public/

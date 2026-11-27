@@ -6,6 +6,8 @@ dist/
 dist-test/
 dist-bench*/
 public/stylelift-importer.zip
+public/figma-plugin/
+figma-plugin/dist/
 
 # test runs and throwaway builds
 *.noindex/

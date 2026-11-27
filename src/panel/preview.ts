@@ -225,8 +225,16 @@ export interface PreviewSession {
   stop(): Promise<void>;
 }
 
+/** How a preview tab is set up before its page loads (the Figma export measures the copy this way). */
+export interface PreviewOptions {
+  /** CSS media features to emulate (prefers-reduced-motion: reduce — every reveal at its final look) */
+  media?: { name: string; value: string }[];
+  /** lay the page out at this viewport (the width the page was captured at) */
+  viewport?: { width: number; height: number };
+}
+
 /** Opens the preview tab. `files` is read on every request, so edits to it show after reload(). */
-export async function startPreview(files: PreviewFiles, sourceUrl: string, entry: string, onEnd: () => void): Promise<PreviewSession> {
+export async function startPreview(files: PreviewFiles, sourceUrl: string, entry: string, onEnd: () => void, opts: PreviewOptions = {}): Promise<PreviewSession> {
   const origin = previewOrigin(sourceUrl);
   const resolve = makePreviewResolver(files, origin); // reads files[…] per request: edits show on reload
   const tab = await chrome.tabs.create({ url: "about:blank", active: true });
@@ -278,6 +286,8 @@ export async function startPreview(files: PreviewFiles, sourceUrl: string, entry
     await send("Fetch.enable", { patterns: [{ urlPattern: "*", requestStage: "Request" }] });
     await send("Page.enable");
     await send("Page.addScriptToEvaluateOnNewDocument", { source: PREVIEW_GUARD });
+    if (opts.media?.length) await send("Emulation.setEmulatedMedia", { features: opts.media });
+    if (opts.viewport) await send("Emulation.setDeviceMetricsOverride", { width: Math.round(opts.viewport.width), height: Math.round(opts.viewport.height), deviceScaleFactor: 1, mobile: false });
     const url = origin + (entry.startsWith("/") ? entry : "/" + entry);
     await send("Page.navigate", { url });
     return {

@@ -1,0 +1,42 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+  :root { color-scheme: light dark; }
+  body { margin: 0; padding: 16px; font: 12px/1.45 Inter, system-ui, sans-serif; color: var(--figma-color-text, #222); background: var(--figma-color-bg, #fff); }
+  h1 { font-size: 13px; font-weight: 600; margin: 0 0 4px; }
+  p { margin: 0 0 12px; color: var(--figma-color-text-secondary, #666); }
+  #drop { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px; height: 120px; border: 1px dashed var(--figma-color-border-strong, #bbb); border-radius: 8px; cursor: pointer; text-align: center; padding: 0 16px; }
+  #drop.over { border-color: var(--figma-color-border-brand-strong, #0d99ff); background: var(--figma-color-bg-brand-tertiary, #e5f4ff); }
+  #drop strong { font-weight: 600; color: var(--figma-color-text, #222); }
+  #file { display: none; }
+  label.opt { display: flex; gap: 6px; align-items: center; margin: 12px 0 8px; color: var(--figma-color-text, #222); }
+  #status { margin: 8px 0 0; min-height: 3em; }
+  .tabs { display: flex; gap: 4px; margin: 0 0 12px; }
+  .tabs button { flex: 1; padding: 6px 8px; border: 1px solid var(--figma-color-border, #e5e5e5); border-radius: 6px; background: transparent; color: var(--figma-color-text-secondary, #666); font: inherit; cursor: pointer; }
+  .tabs button.on { color: var(--figma-color-text, #222); border-color: var(--figma-color-border-strong, #999); font-weight: 600; }
+  button.primary { width: 100%; padding: 10px; border: 0; border-radius: 6px; background: var(--figma-color-bg-brand, #0d99ff); color: var(--figma-color-text-onbrand, #fff); font: inherit; font-weight: 600; cursor: pointer; }
+  .hint { margin-top: 10px; }
+  #status.busy { color: var(--figma-color-text-brand, #0d99ff); }
+  #status.ok { color: var(--figma-color-text-success, #14ae5c); }
+  #status.error { color: var(--figma-color-text-danger, #f24822); }
+</style>
+</head>
+<body>
+  <div class="tabs" role="tablist"><button id="tab-in" class="on" role="tab">Website → Figma</button><button id="tab-out" role="tab">Figma → StyleLift</button></div>
+  <section id="pane-in">
+    <p>Open the <b>.figma.zip</b> StyleLift exported. The page is built as layers beside what's on this page already.</p>
+    <label id="drop" for="file"><strong>Choose the bundle</strong><span>or drop it here</span></label>
+    <input id="file" type="file" accept=".zip,application/zip">
+    <label class="opt"><input id="system" type="checkbox" checked> Add the page's colours as variables and its type as text styles</label>
+  </section>
+  <section id="pane-out" hidden>
+    <p>Select the frames to turn into a website — each becomes a page. Nothing selected: every frame on this page.</p>
+    <button id="send" class="primary">Save for StyleLift (.zip)</button>
+    <p class="hint">Then in StyleLift Studio: <b>Open a Figma design</b>, and export HTML, React, Next.js or Elementor from there.</p>
+  </section>
+  <p id="status"></p>
+  <script>/*UI_SCRIPT*/</script>
+</body>
+</html>

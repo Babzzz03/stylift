@@ -33,6 +33,7 @@ import { buildLiveMirror, buildSiteMirror, type MirrorPage } from "./mirror";
 import { addIslandTag, hasIslands, islandFiles, type IslandFiles } from "./islands";
 import { makeByteFetcher } from "../shared/fetch-bytes";
 import { startPreview, type PreviewSession } from "./preview";
+import { buildFigmaBundle } from "./figma-export";
 import { SUPPORT_EMAIL, browserLabel, reportMailto, reportText } from "../shared/report";
 import { loadPublishSettings, loadTargets, publishNetlify, publishVercel, pushGitHub, saveTarget, slugName, type PublishTargets } from "../shared/publish";
 import { loadWp, wpConfigured, wpImport, type WpImportResult } from "../shared/wordpress";
@@ -1610,6 +1611,32 @@ async function exportProject(kind: "html" | "react" | "next"): Promise<void> {
   }
 }
 
+// Page → Figma: the copy (edits included) measured as Figma layers, with its pictures and the StyleLift plugin for
+// Figma, in one .zip the plugin opens.
+async function exportFigma(): Promise<void> {
+  try {
+    const tabId = editTabId || (await activeTab()).id;
+    // the width the page is seen at: the copy is laid out at it for Figma
+    const [{ result: view }] = await chrome.scripting.executeScript({ target: { tabId }, func: () => ({ width: innerWidth, height: innerHeight }) });
+    const r = await captureCurrent();
+    setStatus("Building the copy for Figma — collecting assets…", "busy");
+    const host = hostOf(r.url);
+    const files = await buildHtmlProject(r.html, r.url, { fetchText, fetchBytes: makeByteFetcher() }, host);
+    const b = await buildFigmaBundle(files, r.url, view && view.width > 200 ? view : { width: 1440, height: 900 }, makeByteFetcher(), (t) => setStatus(t, "busy"));
+    const zip: FileMap = {};
+    for (const e of b.entries) zip[e.name] = e.data;
+    downloadZip(zip, `${host}.figma.zip`);
+    const st = b.snap.stats;
+    srcLog(`✓ Figma: ${st.nodes} layers (${st.texts} texts, ${st.images} pictures, ${st.svgs} vectors, ${st.autoLayout} Auto Layout) · ${b.snap.width} × ${b.snap.height} px${b.picturesMissing ? ` · ⚠ ${b.picturesMissing} picture(s) couldn't be packed` : ""}${st.skipped ? ` · ⚠ ${st.skipped} layer(s) past the limit left out` : ""}`);
+    setStatus(
+      `Exported for Figma: ${st.nodes} layers, ${b.pictures} pictures. In Figma run the StyleLift plugin and choose ${host}.figma.zip (the first time: Plugins → Development → Import plugin from manifest, figma-plugin/manifest.json inside the zip — see README.txt).`,
+      b.picturesMissing ? "warn" : "ok",
+    );
+  } catch (err) {
+    setStatus(err instanceof Error ? err.message : String(err), "error");
+  }
+}
+
 // Whole site → zipped multi-page project, or one self-contained .html per page.
 async function exportSite(kind: "project" | "offline" | "next"): Promise<void> {
   try {
@@ -2440,7 +2467,12 @@ function renderEditor(): HTMLElement {
   expJson.className = "btn";
   expJson.textContent = "JSON";
   expJson.addEventListener("click", exportJson);
-  footer2.append(single, expReact, exp, expJson);
+  const expFigma = document.createElement("button");
+  expFigma.className = "btn";
+  expFigma.textContent = "Figma";
+  expFigma.title = "The page, with your edits, as Figma layers — open the .zip with the StyleLift plugin for Figma (included)";
+  expFigma.addEventListener("click", exportFigma);
+  footer2.append(single, expReact, exp, expJson, expFigma);
   wrap.appendChild(footer2);
   const more = document.createElement("button");
   more.className = "btn source";
@@ -2966,7 +2998,7 @@ function renderSource(): HTMLElement {
   ex.innerHTML = `<h3>${src.scope === "site" ? "Export the whole site" : "Export this page"}</h3>`;
   const SRC_ICON: Record<string, string> = {
     "Edit in Studio": "edit", "Edit site in Studio": "edit", "Live mirror (.zip)": "cube", "Send to WordPress": "upload", "Next.js (.zip)": "fileCode", "React (.zip)": "atom",
-    "HTML (.zip)": "code", "Next.js site (.zip)": "fileCode", "HTML site (.zip)": "globe", "Single-file pages (.zip)": "file", Cancel: "close",
+    "HTML (.zip)": "code", "Figma (.zip)": "layers", "Next.js site (.zip)": "fileCode", "HTML site (.zip)": "globe", "Single-file pages (.zip)": "file", Cancel: "close",
   };
   const mk = (label: string, cls: string, title: string, fn: () => void | Promise<void>) => {
     const b = document.createElement("button");
@@ -3019,6 +3051,7 @@ function renderSource(): HTMLElement {
       mk("Raw HTML", "", "Captured document as-is (assets linked online)", exportRawHtml),
       mk("Elementor (.json)", "", "Elementor template: each section → container with an HTML widget. Import via Templates → Saved Templates → Import", exportElementor),
       mk(".jsx", "", "Page body → single React component", exportReact),
+      mk("Figma (.zip)", "", "The page as Figma layers — frames, editable text, pictures, vectors, Auto Layout, colour variables and text styles. Open it with the StyleLift plugin for Figma (included in the zip)", exportFigma),
     );
     const row3 = document.createElement("div");
     row3.className = "editor-footer";
