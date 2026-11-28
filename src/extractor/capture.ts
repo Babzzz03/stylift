@@ -157,6 +157,10 @@ export interface CaptureStats {
   /** elements the page made during the scroll pass (split text, mounted sections), judged with the rest */
   lateBorn?: number;
   cursorFollowers?: number;
+  /** Framer cursors drawn and kept (one per data-framer-cursor id), shown by the trigger script over their parts */
+  framerCursors?: number;
+  /** words lit up one after another as you scroll, their colour following the scroll in the copy */
+  colourScrubs?: number;
   /** count-up numbers written into the copy at the value they reached */
   countersSet?: number;
   /** Rive / Lottie animations wired to play their real file in the copy */
@@ -450,7 +454,10 @@ ${out.join("\n")}
   // a timed entrance set off at a scroll position (inside a pinned section): the runtime plays it once the page
   // has scrolled that far, instead of when it comes into view
   const IN_AT_ATTR = "data-sl-in-at";
-  const linked: { el: HTMLElement; id: string; pts: { y: number; tf: string; op: number }[]; preStyle: string | null }[] = [];
+  // (w / h: the width and height a script gave it at that point — a panel widening as the one beside it slides away,
+  // a picture's box growing from nothing)
+  // (c: its colour, where a script sets it — a word lit up as the page passes it)
+  const linked: { el: HTMLElement; id: string; pts: { y: number; tf: string; op: number; w?: string; h?: string; c?: string }[]; preStyle: string | null }[] = [];
   // ── scroll-scrubbed canvases (3D / WebGL scenes that change as you scroll) ──────
   // A scene the page re-renders as you scroll (a model rolling along, a camera flying
   // through) is recorded at every scroll stop; the copy stacks those frames and shows
@@ -658,9 +665,13 @@ ${out.join("\n")}
       const y0 = l.pts[0].y, yn = l.pts[l.pts.length - 1].y;
       if (yn - y0 < 40) continue;
       const opVaries = new Set(l.pts.map((p) => p.op.toFixed(2))).size > 1;
+      // (its width and height too, when a script set them at every point and changed them)
+      const wVaries = l.pts.every((p) => p.w) && new Set(l.pts.map((p) => p.w)).size > 1;
+      const hVaries = l.pts.every((p) => p.h) && new Set(l.pts.map((p) => p.h)).size > 1;
+      const cVaries = l.pts.every((p) => p.c) && new Set(l.pts.map((p) => p.c)).size > 1;
       const frames = l.pts.map((p) => {
         const pct = Math.round(((p.y - y0) / (yn - y0)) * 10000) / 100;
-        return `${pct}% { transform: ${p.tf === "none" ? "none" : p.tf};${opVaries ? ` opacity: ${Math.round(p.op * 1000) / 1000};` : ""} }`;
+        return `${pct}% { transform: ${p.tf === "none" ? "none" : p.tf};${opVaries ? ` opacity: ${Math.round(p.op * 1000) / 1000};` : ""}${wVaries ? ` width: ${p.w};` : ""}${hVaries ? ` height: ${p.h};` : ""}${cVaries ? ` color: ${p.c};` : ""} }`;
       });
       out.push(`@keyframes sl-scroll-${l.id} { ${frames.join(" ")} }`);
       out.push(`[${SCROLL_ATTR}="${l.id}"] { animation: sl-scroll-${l.id} linear both; animation-timeline: scroll(root block); animation-range: ${y0}px ${yn}px; }`);
@@ -1013,7 +1024,7 @@ ${out.join("\n")}
     // from then on; one that turns on and off again is replayed on the scroll position.
     const switchWatch = new Set<Element>();
     // (each with where it was on screen then: inside a pinned section the page holds it in place as we scroll on)
-    const switchSamples = new Map<Element, { y: number; tf: string; op: number; top?: number }[]>();
+    const switchSamples = new Map<Element, { y: number; tf: string; op: number; top?: number; w?: string; h?: string; c?: string }[]>();
     // Timed reveals: how an element moved at the stop where it came in — when its first frame changed (after
     // the earliest change anything made at that stop: the trigger), how long until its last, and the shape of
     // the curve. The copy replays the reveal over that time, with that delay (the stagger of letters / words /
@@ -1120,7 +1131,8 @@ ${out.join("\n")}
       if (scrollPhase === "down" && !chrome && !stickyWatch.has(el) && !switchWatch.has(el) && switchWatch.size < 2000 && el instanceof HTMLElement && !inSticky(el)) {
         switchWatch.add(el);
         const v0 = startVisual.get(el);
-        if (v0) switchSamples.set(el, [{ y: startY, tf: v0.transform, op: v0.opacity }, ...(Math.round(scrollY) - stepPx > startY ? [{ y: Math.round(scrollY) - stepPx, tf: v0.transform, op: v0.opacity }] : [])]);
+        const z0 = startSize.get(el);
+        if (v0) switchSamples.set(el, [{ y: startY, tf: v0.transform, op: v0.opacity, w: z0?.w, h: z0?.h, c: z0?.c }, ...(Math.round(scrollY) - stepPx > startY ? [{ y: Math.round(scrollY) - stepPx, tf: v0.transform, op: v0.opacity, w: z0?.w, h: z0?.h, c: z0?.c }] : [])]);
       }
       if (scrollPhase === "down" && !chrome && !stickyWatch.has(el) && stickyWatch.size < 1000 && el instanceof HTMLElement && inSticky(el)) {
         stickyWatch.add(el);
@@ -1215,6 +1227,7 @@ ${out.join("\n")}
     // pre-visuals only for plausible reveal candidates (hidden or offset now)
     const preVisual = new Map<Element, ReturnType<typeof visualOf>>(); // reveal candidates
     const startVisual = new Map<Element, ReturnType<typeof visualOf>>(); // everything, for scroll sampling
+    const startSize = new Map<Element, { w?: string; h?: string; c?: string }>(); // …and the size / colour set on it, if any (a script may change them as you scroll)
     const startCover = new Map<Element, number>(); // absolutely positioned elements: opacity × area
     const startY = Math.round(scrollY);
     for (let i = 0; i < allLive.length; i++) {
@@ -1222,6 +1235,7 @@ ${out.join("\n")}
       if (!(el instanceof HTMLElement) && !(el instanceof SVGElement)) continue;
       const v = visualOf(el);
       startVisual.set(el, v);
+      if (el instanceof HTMLElement && (el.style.width || el.style.height || el.style.color)) startSize.set(el, { w: el.style.width || undefined, h: el.style.height || undefined, c: el.style.color ? getComputedStyle(el).color : undefined });
       if (getComputedStyle(el).position === "absolute") startCover.set(el, coverOf(el, v));
       if (v.opacity < 0.5 || v.transform !== "none" || v.clipPath !== "none" || v.filter !== "none" || v.visibility === "hidden") preVisual.set(el, v);
     }
@@ -1601,7 +1615,8 @@ ${out.join("\n")}
           const v = visualOf(el);
           const arr = switchSamples.get(el) || [];
           const last = arr[arr.length - 1];
-          if (!last || last.y !== yy) arr.push({ y: yy, tf: v.transform, op: v.opacity, top: el.getBoundingClientRect().top });
+          const hs = (el as HTMLElement).style;
+          if (!last || last.y !== yy) arr.push({ y: yy, tf: v.transform, op: v.opacity, top: el.getBoundingClientRect().top, w: hs?.width || undefined, h: hs?.height || undefined, c: hs?.color ? getComputedStyle(el).color : undefined });
           switchSamples.set(el, arr);
         }
       }
@@ -1999,6 +2014,21 @@ ${out.join("\n")}
       rowSpreadOf.set(row, (n = at.size));
       return n;
     };
+    // a row's words whose colour a script set as we scrolled: at how many different stops one first changed colour
+    const colourSpreadOf = new Map<Element, number>();
+    const colourSpread = (row: Element): number => {
+      let n = colourSpreadOf.get(row);
+      if (n !== undefined) return n;
+      const at = new Set<number>();
+      for (const k of Array.from(row.children)) {
+        const sa = switchSamples.get(k);
+        if (!sa || sa.length < 3 || !sa[0].c) continue;
+        const first = sa.find((p) => p.c && p.c !== sa[0].c);
+        if (first) at.add(first.y);
+      }
+      colourSpreadOf.set(row, (n = at.size));
+      return n;
+    };
     for (const { el, cls, style } of liveSnapshot) {
       try {
         if (!el.isConnected || waapiDone.has(el)) continue;
@@ -2080,6 +2110,76 @@ ${out.join("\n")}
           }
         }
         const s0 = seen.get(el);
+        // switched on and off as the page scrolls, where it was on screen at each stop (see below)
+        const warr = o.scrollLinked ? switchSamples.get(el) : undefined;
+        // In a layer fixed to the screen — a dark shade over the hero rising as you scroll down, its picture zooming
+        // (busybox.io): it belongs to the screen, not to a spot on the page. Changing steadily with the scroll: replayed on
+        // the scroll position, from how it looks at the top. Never a reveal (its most shown look would stay all along).
+        // Judged first: at the top again it no longer has its "best" look (monodrift.framer.website's Cascade panels
+        // widen and slide as you scroll), which is not a carousel that rolled on.
+        const fixedLayer = el instanceof HTMLElement && !inChrome(el) && inFixedLayer(el);
+        // (one moved by a progress variable its script sets — a bar sliding in by --progress — has the variable itself
+        // replayed: exact, and everything else the CSS draws from it follows)
+        if (fixedLayer && warr && warr.length >= 3 && !timerTouched.has(el) && !varHosts.has(el as HTMLElement) && linked.length < 250) {
+          const pts = Array.from(new Map(warr.map((p) => [p.y, p])).values()).sort((a, b) => a.y - b.y);
+          // (and its size, where a script sets it in px at every point: a panel widening as the one beside it slides
+          // off, a picture's box growing from nothing)
+          const px = (v?: string) => !!v && /^[\d.]+px$/.test(v);
+          const wpx = pts.every((p) => px(p.w)), hpx = pts.every((p) => px(p.h));
+          const series = pts.map((p) => { const m = matrixNums(p.tf); return m.length === 6 ? [p.op, m[0], m[4], m[5], wpx ? parseFloat(p.w!) : 0, hpx ? parseFloat(p.h!) : 0] : null; });
+          if (series.every((v) => v)) {
+            const tol = [0.02, 0.005, 2, 2, 2, 2];
+            let steady = true, moved = false, turns = 0;
+            for (let c = 0; c < 6; c++) {
+              const vals = series.map((v) => v![c]);
+              let up = false, down = false, dir = 0, n = 0;
+              for (let i = 1; i < vals.length; i++) {
+                const d = vals[i] - vals[i - 1];
+                if (d > tol[c]) up = true;
+                if (d < -tol[c]) down = true;
+                const s1 = d > tol[c] ? 1 : d < -tol[c] ? -1 : 0;
+                if (s1 && dir && s1 !== dir) n++;
+                if (s1) dir = s1;
+              }
+              if (up && down) steady = false;
+              turns = Math.max(turns, n);
+              const range = Math.max(...vals) - Math.min(...vals);
+              if ((c === 0 && range >= 0.15) || (c === 1 && range >= 0.02) || (c >= 2 && range >= 8)) moved = true;
+            }
+            const distinct = new Set(series.map((v) => v!.map((x) => x.toFixed(2)).join(","))).size;
+            // (or a smooth curve that turns once or twice — a slide's wipe pushed further out while its panel widens,
+            // then drawn in: many looks along the scroll. A look switched on and off at stop after stop turns more)
+            const smooth = turns <= 2 && distinct >= 4;
+            // (two looks are enough here: a shade switched on past a point of the page — a fixed layer's look is
+            // the screen's, and only the scroll position moves it)
+            if ((steady || smooth) && moved && distinct >= 2) {
+              if (cls === null) el.removeAttribute("class"); else el.setAttribute("class", cls);
+              if (style === null) el.removeAttribute("style"); else el.setAttribute("style", style);
+              const id = `s${linked.length + 1}`;
+              el.setAttribute(SCROLL_ATTR, id);
+              linked.push({ el, id, pts, preStyle: style });
+              stats.fixedLayerLinks = (stats.fixedLayerLinks || 0) + 1;
+              dbg(el, `in a fixed layer, following the scroll (${pts.length} samples)`);
+              continue;
+            }
+          }
+        }
+        // A row of words lit up one after another as you scroll (aldena.framer.media: a script sets each word's colour
+        // from grey to white as the page passes it): the row lights up over three stops or more → each word's colour
+        // follows the scroll in the copy, from how it looked at the top
+        if (warr && warr.length >= 3 && ofRow && el instanceof HTMLElement && linked.length < 800 && !timerTouched.has(el) && !inChrome(el)) {
+          const pts = Array.from(new Map(warr.map((p) => [p.y, p])).values()).sort((a, b) => a.y - b.y);
+          if (pts.every((p) => p.c) && new Set(pts.map((p) => p.c)).size > 1 && colourSpread(el.parentElement!) >= 3) {
+            if (cls === null) el.removeAttribute("class"); else el.setAttribute("class", cls);
+            if (style === null) el.removeAttribute("style"); else el.setAttribute("style", style);
+            const id = `s${linked.length + 1}`;
+            el.setAttribute(SCROLL_ATTR, id);
+            linked.push({ el, id, pts, preStyle: style });
+            stats.colourScrubs = (stats.colourScrubs || 0) + 1;
+            dbg(el, `a word lit up as you scroll (${pts.length} samples)`);
+            continue;
+          }
+        }
         // a reveal happens once and stays put; things still moving after the scrolling
         // stopped (odometer digits rolling through 0, carousels) are not reveals
         // Moved away from its "best" look while fully visible and on screen: a counter
@@ -2099,7 +2199,10 @@ ${out.join("\n")}
             const c = clip.getBoundingClientRect();
             return r.height >= c.height * 1.8 || r.width >= c.width * 1.8;
           })();
-          if ((onScreen || track) && !restingTf(now.transform) && now.visibility !== "hidden" && now.opacity >= s0.at.opacity - 0.05 && s0.pre.opacity >= s0.at.opacity - 0.05) continue;
+          if ((onScreen || track) && !restingTf(now.transform) && now.visibility !== "hidden" && now.opacity >= s0.at.opacity - 0.05 && s0.pre.opacity >= s0.at.opacity - 0.05) {
+            dbg(el, `moved on from its best look, showing: kept as it is now (${now.transform})`);
+            continue;
+          }
         }
         // a fixed element belongs to the viewport, not to a spot on the page: an overlay
         // shown only while you scroll through some sections (a 3D model "rolling along")
@@ -2108,7 +2211,6 @@ ${out.join("\n")}
         // switched on and off again while ON SCREEN as the page scrolled (the active item of a list, posters /
         // captions taking turns) — a reveal stays on, or hides only once scrolled away: replayed on the scroll
         // position, starting from how it looked at the top
-        const warr = o.scrollLinked ? switchSamples.get(el) : undefined;
         // (a row's letters / words count apart: a page splits hundreds of them — wearebulletproof.com ~300)
         if (warr && warr.length >= 3 && el instanceof HTMLElement && linked.length < (ofRow ? 800 : 250) && !timerTouched.has(el) && !slideBlock.has(el) && !inChrome(el) && getComputedStyle(el).position !== "fixed") {
           const pts = Array.from(new Map(warr.map((p) => [p.y, p])).values()).sort((a, b) => a.y - b.y);
@@ -2183,41 +2285,6 @@ ${out.join("\n")}
               linked.push({ el, id, pts: pts.filter((p) => p.y <= goneAt + innerHeight), preStyle: style });
               stats.topExits = (stats.topExits || 0) + 1;
               dbg(el, `shown at the top, leaving as you scroll (${pts.length} samples)`);
-              continue;
-            }
-          }
-        }
-        // In a layer fixed to the screen — a dark shade over the hero rising as you scroll down, its picture zooming
-        // (busybox.io): it belongs to the screen, not to a spot on the page. Changing steadily with the scroll: replayed on
-        // the scroll position, from how it looks at the top. Never a reveal (its most shown look would stay all along).
-        const fixedLayer = el instanceof HTMLElement && !inChrome(el) && inFixedLayer(el);
-        // (one moved by a progress variable its script sets — a bar sliding in by --progress — has the variable itself
-        // replayed: exact, and everything else the CSS draws from it follows)
-        if (fixedLayer && warr && warr.length >= 3 && !timerTouched.has(el) && !varHosts.has(el as HTMLElement) && linked.length < 250) {
-          const pts = Array.from(new Map(warr.map((p) => [p.y, p])).values()).sort((a, b) => a.y - b.y);
-          const series = pts.map((p) => { const m = matrixNums(p.tf); return m.length === 6 ? [p.op, m[0], m[4], m[5]] : null; });
-          if (series.every((v) => v)) {
-            const tol = [0.02, 0.005, 2, 2];
-            let steady = true, moved = false;
-            for (let c = 0; c < 4; c++) {
-              const vals = series.map((v) => v![c]);
-              let up = false, down = false;
-              for (let i = 1; i < vals.length; i++) { const d = vals[i] - vals[i - 1]; if (d > tol[c]) up = true; if (d < -tol[c]) down = true; }
-              if (up && down) steady = false;
-              const range = Math.max(...vals) - Math.min(...vals);
-              if ((c === 0 && range >= 0.15) || (c === 1 && range >= 0.02) || (c >= 2 && range >= 8)) moved = true;
-            }
-            const distinct = new Set(series.map((v) => v!.map((x) => x.toFixed(2)).join(","))).size;
-            // (two looks are enough here: a shade switched on past a point of the page — a fixed layer's look is
-            // the screen's, and only the scroll position moves it)
-            if (steady && moved && distinct >= 2) {
-              if (cls === null) el.removeAttribute("class"); else el.setAttribute("class", cls);
-              if (style === null) el.removeAttribute("style"); else el.setAttribute("style", style);
-              const id = `s${linked.length + 1}`;
-              el.setAttribute(SCROLL_ATTR, id);
-              linked.push({ el, id, pts, preStyle: style });
-              stats.fixedLayerLinks = (stats.fixedLayerLinks || 0) + 1;
-              dbg(el, `in a fixed layer, following the scroll (${pts.length} samples)`);
               continue;
             }
           }
@@ -3603,6 +3670,22 @@ ${out.join("\n")}
           clsTargets.push(b);
           bars++;
         }
+        // …and Framer components held on the screen that switch to another variant past a point of the page
+        // (arpeggio.framer.website: the big wordmark, in a layer fixed to the screen, becomes the bar's small logo once
+        // a marker scrolls by). A component's variant is a class on its root (framer-v-…); the page's CSS draws each.
+        let comps = 0;
+        for (const el of Array.from(document.querySelectorAll('[class*="framer-v-"]')).slice(0, 3000)) {
+          if (comps >= 60) break;
+          if (clsTargets.includes(el)) continue;
+          let held = false;
+          for (let a: Element | null = el, i = 0; a && a !== document.body && i < 6; a = a.parentElement, i++) {
+            const pos = getComputedStyle(a).position;
+            if (pos === "fixed" || pos === "sticky") { held = true; break; }
+          }
+          if (!held) continue;
+          clsTargets.push(el);
+          comps++;
+        }
       }
       if (scrollCls.length > 400) return;
       const c = new Map<Element, Set<string>>();
@@ -4125,6 +4208,66 @@ ${out.join("\n")}
       }
     }
   }
+  // Framer's cursors: the parts that have one carry data-framer-cursor="<id>"; Framer's own script draws that cursor —
+  // a small layer fixed to the screen, centred on the pointer — only while the pointer is over such a part, and puts
+  // framer-cursor-none on <body> (the system pointer hidden everywhere). The copy runs none of it: it showed NO pointer
+  // at all (arpeggio.framer.website, aldena.framer.media). Here each cursor is drawn once — the pointer brought over a
+  // part with that id — and kept as it looked ([data-sl-fcur], hidden); the trigger script shows it at the pointer over
+  // the same parts, and hides the system pointer only then.
+  const framerCursors: string[] = [];
+  async function recordFramerCursors(): Promise<void> {
+    const byId = new Map<string, HTMLElement>();
+    for (const el of Array.from(document.querySelectorAll<HTMLElement>("[data-framer-cursor]"))) {
+      const k = el.getAttribute("data-framer-cursor") || "";
+      if (!k || byId.size >= 12) continue;
+      const r = el.getBoundingClientRect();
+      // (a part with a size: one hidden at this width can't be pointed at)
+      if (r.width > 0 && r.height > 0 && !byId.has(k)) byId.set(k, el);
+    }
+    if (!byId.size) return;
+    const X = Math.round(innerWidth / 2), Y = Math.round(innerHeight / 2);
+    const fire = (t: Element, type: string, x: number, y: number) => {
+      const base = { clientX: x, clientY: y, view: window, bubbles: !/enter|leave/.test(type), cancelable: true, composed: true, relatedTarget: null };
+      try {
+        t.dispatchEvent(type.startsWith("pointer") && typeof PointerEvent === "function" ? new PointerEvent(type, { ...base, pointerType: "mouse", isPrimary: true }) : new MouseEvent(type.replace(/^pointer/, "mouse"), base));
+      } catch {
+        /* a handler threw */
+      }
+    };
+    // the layer drawn at the pointer: fixed to the screen, small, centred there (Framer portals it near <body>)
+    const drawnAt = (x: number, y: number): HTMLElement | null => {
+      for (const el of Array.from(document.querySelectorAll<HTMLElement>("body > *, body > * > *, body > * > * > *"))) {
+        if (el.hasAttribute("data-sl-fcur") || getComputedStyle(el).position !== "fixed") continue;
+        const r = el.getBoundingClientRect();
+        if (r.width < 2 || r.height < 2 || r.width > 420 || r.height > 420) continue;
+        if (Math.hypot(r.left + r.width / 2 - x, r.top + r.height / 2 - y) <= 24) return el;
+      }
+      return null;
+    };
+    for (const [id, el] of byId) {
+      for (const t of ["pointerover", "pointerenter", "mouseover", "mouseenter"]) fire(el, t, X, Y);
+      for (const d of [0, 6, 12]) {
+        fire(el, "pointermove", X + d, Y + d);
+        fire(el, "mousemove", X + d, Y + d);
+        await sleep(60);
+      }
+      await sleep(450);
+      const c = drawnAt(X + 12, Y + 12);
+      if (c) {
+        // kept as it looks over this part, minus where the pointer was (the trigger script places it)
+        const k = c.cloneNode(true) as HTMLElement;
+        k.style.transform = (c.style.transform || "").replace(/translate3d\([^)]*\)/g, "").replace(/\s+/g, " ").trim();
+        k.style.display = "none";
+        k.setAttribute("data-sl-fcur", id);
+        k.removeAttribute("data-sl-fcur-live");
+        framerCursors.push(k.outerHTML);
+        c.setAttribute("data-sl-fcur-live", "");
+        stats.framerCursors = (stats.framerCursors || 0) + 1;
+      }
+      for (const t of ["pointerout", "pointerleave", "mouseout", "mouseleave"]) fire(el, t, X + 12, Y + 12);
+      await sleep(120);
+    }
+  }
   async function recordHovers(budget = 10000): Promise<void> {
     const tStart = performance.now();
     const PROPS = ["transform", "translate", "scale", "rotate", "opacity", "filter", "clip-path", "color", "background-color", "border-color", "box-shadow", "width", "letter-spacing", "visibility"];
@@ -4456,6 +4599,11 @@ ${out.join("\n")}
       await recordCursor();
     } catch (e) {
       warnings.push("Cursor follower pass failed: " + (e instanceof Error ? e.message : String(e)));
+    }
+    try {
+      await recordFramerCursors();
+    } catch (e) {
+      warnings.push("Framer cursor pass failed: " + (e instanceof Error ? e.message : String(e)));
     }
   }
   // Live widgets (rotating carousels, number roll-ups, tickers) keep changing while we
@@ -4794,6 +4942,17 @@ ${out.join("\n")}
       }
     }
     root.querySelectorAll("[data-sl-exited]").forEach((el) => el.removeAttribute("data-sl-exited"));
+    // Framer's cursors: the one it drew as we pointed is not kept where it was; each drawn is added, hidden, for the
+    // trigger script. And the system pointer is never hidden by itself (Framer's class): with no script running, a
+    // copy would have no pointer at all.
+    root.querySelectorAll("[data-sl-fcur-live]").forEach((el) => el.remove());
+    for (const n of [root, root.querySelector("body")]) if (n?.classList.contains("framer-cursor-none")) { n.classList.remove("framer-cursor-none"); if (!n.getAttribute("class")) n.removeAttribute("class"); }
+    if (framerCursors.length) {
+      const host = root.querySelector("body") || root;
+      const tpl = document.createElement("template");
+      tpl.innerHTML = framerCursors.join("");
+      host.append(...Array.from(tpl.content.children));
+    }
     root.querySelectorAll("[data-sl-cursor-rest]").forEach((el) => {
       const v = el.getAttribute("data-sl-cursor-rest") || "";
       el.removeAttribute("data-sl-cursor-rest");
@@ -4917,7 +5076,7 @@ ${out.join("\n")}
     for (const sw of swappedBars) sw.el.replaceChildren(...sw.liveKids);
     unmark();
     for (const r of reveals) { r.el.removeAttribute(REVEAL_ATTR); r.el.removeAttribute(TL_USE_ATTR); } // leave the live page untouched
-    document.querySelectorAll("[data-sl-gsap], [data-sl-gsap-loop], [data-sl-wfs], [data-sl-pin], [data-sl-pinned], [data-sl-hov], [data-sl-hovt], [data-sl-magnet], [data-sl-pull], [data-sl-tilt], [data-sl-tilting], [data-sl-cursor], [data-sl-cursor-rest], [data-sl-gl], [data-sl-exited], [data-sl-tabs], [data-sl-paddle], [data-sl-scroller], [data-sl-media], [data-sl-media-v], [data-sl-media-ui], [data-sl-scroll-classes], [data-sl-hold], [data-sl-var]").forEach((e) => { for (const a of ["data-sl-gsap", "data-sl-gsap-loop", "data-sl-wfs", "data-sl-pin", "data-sl-pinned", "data-sl-hov", "data-sl-hovt", "data-sl-magnet", "data-sl-pull", "data-sl-tilt", "data-sl-tilting", "data-sl-cursor", "data-sl-cursor-rest", "data-sl-gl", "data-sl-exited", "data-sl-tabs", "data-sl-paddle", "data-sl-scroller", "data-sl-media", "data-sl-media-v", "data-sl-media-ui", "data-sl-scroll-classes", "data-sl-hold", "data-sl-var"]) e.removeAttribute(a); });
+    document.querySelectorAll("[data-sl-gsap], [data-sl-gsap-loop], [data-sl-wfs], [data-sl-pin], [data-sl-pinned], [data-sl-hov], [data-sl-hovt], [data-sl-magnet], [data-sl-pull], [data-sl-tilt], [data-sl-tilting], [data-sl-cursor], [data-sl-cursor-rest], [data-sl-fcur-live], [data-sl-gl], [data-sl-exited], [data-sl-tabs], [data-sl-paddle], [data-sl-scroller], [data-sl-media], [data-sl-media-v], [data-sl-media-ui], [data-sl-scroll-classes], [data-sl-hold], [data-sl-var]").forEach((e) => { for (const a of ["data-sl-gsap", "data-sl-gsap-loop", "data-sl-wfs", "data-sl-pin", "data-sl-pinned", "data-sl-hov", "data-sl-hovt", "data-sl-magnet", "data-sl-pull", "data-sl-tilt", "data-sl-tilting", "data-sl-cursor", "data-sl-cursor-rest", "data-sl-fcur-live", "data-sl-gl", "data-sl-exited", "data-sl-tabs", "data-sl-paddle", "data-sl-scroller", "data-sl-media", "data-sl-media-v", "data-sl-media-ui", "data-sl-scroll-classes", "data-sl-hold", "data-sl-var"]) e.removeAttribute(a); });
     document.documentElement.removeAttribute("data-sl-wf-css");
     document.querySelectorAll(`[${RETAG_ATTR}]`).forEach((e) => e.removeAttribute(RETAG_ATTR));
     document.querySelectorAll(`[${COUNT_ATTR}]`).forEach((e) => e.removeAttribute(COUNT_ATTR));

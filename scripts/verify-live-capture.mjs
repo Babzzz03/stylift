@@ -139,6 +139,16 @@ writeFileSync(join(outdir, "switch.html"), `<!doctype html><html><head><style>bo
 <div class="tall"></div>${[1, 2, 3, 4, 5].map((i) => `<div class="it" id="it${i}">Item ${i}</div>`).join("")}<div class="tall"></div>
 <script>{ const its = [...document.querySelectorAll(".it")]; const f = () => { let best = null, bd = 1e9; for (const it of its) { const r = it.getBoundingClientRect(); const d = Math.abs(r.top + r.height / 2 - innerHeight / 2); if (d < bd) { bd = d; best = it; } } its.forEach((it) => it.classList.toggle("active", it === best && bd < 400)); }; addEventListener("scroll", f, { passive: true }); f(); }</script>
 </body></html>`);
+// Framer's cursors (arpeggio.framer.website, aldena.framer.media): parts carry data-framer-cursor="<id>"; the site's
+// script draws a small layer fixed to the screen, centred on the pointer, only while the pointer is over such a part —
+// a different one per id — and hides the system pointer (framer-cursor-none on <body>)
+writeFileSync(join(outdir, "framercursor.html"), `<!doctype html><html><head><style>body{margin:0;font:20px sans-serif} .framer-cursor-none,.framer-cursor-none *{cursor:none!important} #fpage{height:2400px} #flink{display:block;width:320px;height:90px;margin:300px auto;background:#ddd}</style></head><body>
+<div id="fpage" data-framer-cursor="dot"><a id="flink" href="#" data-framer-cursor="ring">Link</a></div>
+<script>{ let cur = null; const draw = (k, x, y) => { if (!cur) { cur = document.createElement("div"); cur.className = "fcur framer-pointer-events-none"; document.body.appendChild(cur); }
+  const w = k === "ring" ? 64 : 14; cur.setAttribute("data-v", k);
+  cur.style.cssText = "position: fixed; top: 0px; left: 0px; z-index: 13; pointer-events: none; border-radius: 50%; width: " + w + "px; height: " + w + "px; background: " + (k === "ring" ? "rgba(255, 68, 0, 0.4)" : "rgb(255, 68, 0)") + "; transform: translate(-50%, -50%) translate3d(" + x + "px, " + y + "px, 0px);";
+  document.body.classList.add("framer-cursor-none"); };
+addEventListener("pointermove", (e) => { const p = e.target && e.target.closest && e.target.closest("[data-framer-cursor]"); if (!p) { if (cur) cur.remove(); cur = null; document.body.classList.remove("framer-cursor-none"); return; } draw(p.getAttribute("data-framer-cursor"), e.clientX, e.clientY); }); }</script></body></html>`);
 // pointer effects run by scripts: a magnetic button (follows 40% of the pointer's offset), a card tilted in 3D
 // (up to 12°), a cursor follower easing after the pointer (20% of the gap each frame)
 writeFileSync(join(outdir, "pointer.html"), `<!doctype html><html><head><style>body{margin:0;font:16px sans-serif;height:2000px} #mag{display:inline-block;margin:120px;padding:20px 40px;background:#111;color:#fff} .card{width:300px;height:200px;margin:60px 120px;background:#c33} #cur{position:fixed;left:0;top:0;width:20px;height:20px;border-radius:50%;background:#000;pointer-events:none;transform:translate(-100px,-100px)}</style></head><body>
@@ -231,6 +241,32 @@ writeFileSync(join(outdir, "pinwords.html"), `<!doctype html><html><head><style>
 writeFileSync(join(outdir, "pintimed.html"), `<!doctype html><html><head><style>body{margin:0;font:40px sans-serif} .tall{height:1500px} #pts{height:3000px} .pin{position:sticky;top:0;height:900px;display:flex;align-items:center;padding:0 80px} #ptp{margin:0} #ptp span{display:inline-block;margin-right:12px;opacity:0;transform:translate(0px, 20px)}</style></head><body>
 <div class="tall"></div><section id="pts"><div class="pin"><p id="ptp"><span id="pt0">A</span><span id="pt1">precise</span><span id="pt2">system</span><span id="pt3">of</span><span id="pt4">decisions</span><span id="pt5">made</span><span id="pt6">to</span><span id="pt7">last</span></p></div></section><div class="tall"></div><div class="tall"></div>
 <script>{ const ws = [...document.querySelectorAll("#ptp span")]; let started = false; addEventListener("scroll", () => { if (started && scrollY < 2000) { started = false; ws.forEach((w) => { w.style.opacity = "0"; w.style.transform = "translate(0px, 20px)"; }); } if (started || scrollY < 2100) return; started = true; const t0 = performance.now(); const f = (t) => { let more = false; ws.forEach((w, i) => { const p = Math.max(0, Math.min(1, (t - t0 - i * 80) / 600)); const e = 1 - Math.pow(1 - p, 3); w.style.opacity = e.toFixed(3); w.style.transform = "translate(0px, " + (20 * (1 - e)).toFixed(2) + "px)"; if (p < 1) more = true; }); if (more) requestAnimationFrame(f); }; requestAnimationFrame(f); }); }</script></body></html>`);
+// a statement whose words light up one after another as the page scrolls past them (aldena.framer.media): a script
+// sets each word's colour from grey to white — no movement, no fading, only colour
+writeFileSync(join(outdir, "litwords.html"), `<!doctype html><html><head><style>body{margin:0;font:40px sans-serif;background:#000;color:#fff} .tall{height:1200px} #lw span.w{display:block;height:120px}</style></head><body>
+<div class="tall"></div><p id="lw">${"We are a brand and editorial studio for companies that would".split(" ").map((w, i) => `<span class="w" id="lw${i}" style="color: rgba(255, 255, 255, 0.4); transition: color 0.3s ease;">${w}</span>`).join("")}</p><div class="tall"></div><div class="tall"></div>
+<script>{ const ws = [...document.querySelectorAll("#lw .w")]; const f = () => { for (const w of ws) w.style.color = w.getBoundingClientRect().top < innerHeight * 0.6 ? "rgb(255, 255, 255)" : "rgba(255, 255, 255, 0.4)"; }; addEventListener("scroll", f); f(); }</script></body></html>`);
+// a Framer component in a layer fixed to the screen that switches variant once a marker scrolls by
+// (arpeggio.framer.website: the big wordmark becomes the bar's small logo) — the variant is a class on its root
+writeFileSync(join(outdir, "framervariant.html"), `<!doctype html><html><head><style>body{margin:0;font:20px sans-serif} .tall{height:1400px} .bar{position:fixed;left:0;right:0;bottom:0;z-index:7} .framer-lg.framer-v-big .word{font-size:160px} .framer-lg.framer-v-small .word{font-size:18px}</style></head><body>
+<div class="bar"><div class="framer-lg framer-v-big" id="lg" data-framer-name="Desktop - Maximized"><span class="word">Wordmark</span></div></div>
+<div class="tall"></div><div id="logo-trigger" style="height:10px"></div><div class="tall"></div><div class="tall"></div>
+<script>{ const lg = document.getElementById("lg"), t = document.getElementById("logo-trigger"); const f = () => { const past = t.getBoundingClientRect().top < innerHeight * 0.5; lg.classList.toggle("framer-v-big", !past); lg.classList.toggle("framer-v-small", past); }; addEventListener("scroll", f); f(); }</script></body></html>`);
+// a gallery of panels fixed to the screen that a script moves as you scroll (monodrift.framer.website's Cascade): the
+// first panel widens as it slides left; the next one's window is pushed further out while that panel widens, then
+// wipes in (a curve that turns once); the picture box inside grows from nothing, width and height
+writeFileSync(join(outdir, "cascade.html"), `<!doctype html><html><head><style>body{margin:0;font:20px sans-serif;background:#111} .tall{height:4200px}
+.panel{position:fixed;left:0;top:0;height:100vh;pointer-events:none} .win{position:absolute;inset:0;overflow:hidden} .pic{position:absolute;left:0;top:0;overflow:hidden;background:rgb(200,120,60)}</style></head><body>
+<div class="panel" id="cp1" style="width: 865px; transform: translate3d(575px, 0px, 0px); z-index: 2; background: rgb(60,60,60);">One</div>
+<div class="panel" id="cp2" style="width: 865px; transform: translate3d(575px, 0px, 0px); z-index: 3;"><div class="win" id="cw2" style="transform: translate3d(865px, 0px, 0px); background: rgb(30,90,160);"><div class="pic" id="cb2" style="width: 0px; height: 0px;">Two</div></div></div>
+<div class="tall"></div>
+<script>{ const p1 = document.getElementById("cp1"), p2 = document.getElementById("cp2"), w2 = document.getElementById("cw2"), b2 = document.getElementById("cb2");
+const k = (v) => Math.max(0, Math.min(1, v));
+const draw = () => { const y = scrollY, inset = 575 * (1 - k(y / 800)), w = 1440 - inset;
+  for (const p of [p1, p2]) { p.style.width = w + "px"; p.style.transform = "translate3d(" + inset + "px, 0px, 0px)"; }
+  const q = k((y - 800) / 1200); w2.style.transform = "translate3d(" + (w * (1 - q)) + "px, 0px, 0px)";
+  const g = k((y - 300) / 1200); b2.style.width = (400 * g) + "px"; b2.style.height = (300 * g) + "px"; };
+addEventListener("scroll", draw); draw(); }</script></body></html>`);
 // pinned sections, two kinds of change while the section holds still: steps stacked in one place handing over as you
 // scroll (busybox.io's process: the first only goes off, the last only comes on) — and a title with its text coming
 // in once at a point of the pinned scroll, staying (santalarch.com): steps follow the scroll, the title is an entrance
@@ -799,6 +835,26 @@ for (const variant of ["", "#bundled"]) {
   const css = (pc.html || "").match(/@keyframes sl-scroll-s\d+ \{[^@]*?opacity: 0[^@]*?opacity: 1/g) || [];
   ok(ws.length === 11 && moving.length >= 9 && css.length >= 9, `words a script splits a pinned text into as it comes in, then lights up as you scroll through it, are each scrubbed on the scroll in the copy (${moving.length}/${ws.length} words moving, ${css.length} fade-in timelines, ${pc.stats?.lateBorn || 0} late-made elements)`);
 }
+{ const vc = await capture(synthUrl.replace("page.html", "framervariant.html"), {}, 500).catch((e) => ({ html: "", error: String(e) }));
+  const d = new JSDOM(vc.html || "<html></html>").window.document;
+  const lg = d.querySelector("#lg");
+  let rules = []; try { rules = JSON.parse(lg?.getAttribute("data-sl-scroll-classes") || "[]"); } catch {}
+  const big = rules.find((r) => r.t === "framer-v-big"), small = rules.find((r) => r.t === "framer-v-small");
+  ok(lg?.classList.contains("framer-v-big") && !lg?.classList.contains("framer-v-small") && big && big.a === 0 && big.b > 500 && big.b < 1400 && small && Math.abs(small.a - big.b) < 5 && small.b === null, `a Framer component fixed to the screen that switches variant past a marker switches at the same point of the page in the copy (${JSON.stringify(rules)})`);
+}
+{ const lc = await capture(synthUrl.replace("page.html", "litwords.html"), {}, 500).catch((e) => ({ html: "", error: String(e) }));
+  const d = new JSDOM(lc.html || "<html></html>").window.document;
+  const ws = [...d.querySelectorAll("#lw .w")];
+  const lit = ws.filter((w) => { const id = w.getAttribute("data-sl-scroll"); const m = id && new RegExp(`@keyframes sl-scroll-${id} \\{(.*?)\\}\\s*\\}`).exec(lc.html || ""); return m && /color: rgba\(255, 255, 255, 0\.4\)/.test(m[1]) && /color: rgb\(255, 255, 255\)/.test(m[1]); });
+  ok(ws.length === 11 && lit.length >= 8 && ws.every((w) => /rgba\(255, 255, 255, 0\.4\)/.test(w.getAttribute("style") || "")), `words a script lights up one after another as you scroll (only their colour changes) follow the scroll in the copy, grey to white (${lit.length}/${ws.length} words, ${lc.stats?.colourScrubs || 0} colour scrubs)`);
+}
+{ const cc = await capture(synthUrl.replace("page.html", "cascade.html"), {}, 500).catch((e) => ({ html: "", error: String(e) }));
+  const d = new JSDOM(cc.html || "<html></html>").window.document;
+  const frames = (q) => { const id = d.querySelector(q)?.getAttribute("data-sl-scroll"); const m = id && new RegExp(`@keyframes sl-scroll-${id} \\{(.*?)\\}\\s*\\}`).exec(cc.html || ""); return m ? m[1] : ""; };
+  const f1 = frames("#cp1"), fw = frames("#cw2"), fb = frames("#cb2");
+  ok(/width: 8\d\dpx/.test(f1) && /width: 1440px/.test(f1) && /matrix\(1, 0, 0, 1, 575, 0\)/.test(f1), `a panel fixed to the screen that a script widens and slides as you scroll follows the scroll in the copy, its width too (${f1.slice(0, 120) || "not linked"})`);
+  ok(!!fw && !!fb && /height: 0px/.test(fb) && /height: 300px/.test(fb) && /width: 400px/.test(fb), `…the next panel's window pushed out then wiped in (a curve that turns once) and the picture box growing from nothing, width and height, too (window ${fw ? "linked" : "—"}, box ${fb.slice(0, 90) || "—"})`);
+}
 { const hc = await capture(synthUrl.replace("page.html", "heldsteps.html"), {}, 500).catch((e) => ({ html: "", error: String(e) }));
   const d = new JSDOM(hc.html || "<html></html>").window.document;
   const steps = ["#st0", "#st1", "#st2"].map((q) => d.querySelector(q));
@@ -953,6 +1009,28 @@ for (const variant of ["", "#bundled"]) {
   const kf = (el) => (new RegExp(`@keyframes sl-scroll-${el?.getAttribute("data-sl-scroll")} \\{([^}]*\\}){2,}`).exec(css) || [""])[0];
   const onOff = its.every((el) => { const k = kf(el); return /opacity: 1;/.test(k) && /opacity: 0\.25;/.test(k); });
   ok(its.every((el) => el?.hasAttribute("data-sl-scroll")) && onOff && its.every((el) => !el.classList.contains("active")), `content that switches as you scroll: each list item lights up and dims again at its scroll position (${its.map((el) => el?.getAttribute("data-sl-scroll") || "-").join(",")})`);
+}
+{ const fc = await capture(synthUrl.replace("page.html", "framercursor.html"), {}, 800).catch((e) => ({ html: "", error: String(e) }));
+  const d = new JSDOM(fc.html || "<html></html>").window.document;
+  const kept = [...d.querySelectorAll("[data-sl-fcur]")];
+  const ring = d.querySelector('[data-sl-fcur="ring"]'), dot = d.querySelector('[data-sl-fcur="dot"]');
+  ok(kept.length === 2 && /width: 64px/.test(ring?.getAttribute("style") || "") && /width: 14px/.test(dot?.getAttribute("style") || "") && kept.every((k) => /display: none/.test(k.getAttribute("style") || "") && !/translate3d/.test(k.getAttribute("style") || "")), `Framer cursors: each one the site draws over its parts is kept, hidden, as it looked (${kept.map((k) => k.getAttribute("data-sl-fcur")).join(", ") || "none"})`);
+  ok(d.querySelectorAll(".fcur:not([data-sl-fcur])").length === 0 && !d.body.classList.contains("framer-cursor-none"), `…the one drawn as we pointed isn't left where it was, and the system pointer isn't hidden by itself (body: "${d.body.className}")`);
+  // in the copy, with the trigger script: over the link its cursor, centred at the pointer; over the page the other
+  const rt = readFileSync(new URL("../public/sl-motion-runtime.js", import.meta.url), "utf8");
+  writeFileSync(join(outdir, "framercursor.captured.html"), (fc.html || "").replace(/<\/body>/i, () => `<script>${rt}</script></body>`));
+  const t = await getJSON(`/json/new?about:blank`, "PUT");
+  const c = cdpConnect(t.webSocketDebuggerUrl); await c.ready;
+  await c.send("Page.enable");
+  await c.send("Emulation.setDeviceMetricsOverride", { width: 1440, height: 900, deviceScaleFactor: 1, mobile: false });
+  await c.send("Page.navigate", { url: synthUrl.replace("page.html", "framercursor.captured.html") });
+  await sleep(1500);
+  const at = async (x, y) => { await c.send("Input.dispatchMouseEvent", { type: "mouseMoved", x, y }); await sleep(200); return (await c.send("Runtime.evaluate", { expression: `(() => { const on = [...document.querySelectorAll("[data-sl-fcur]")].filter((e) => getComputedStyle(e).display !== "none"); const r = on[0]?.getBoundingClientRect(); return { on: on.map((e) => e.getAttribute("data-sl-fcur")).join(","), cx: r ? Math.round(r.left + r.width / 2) : null, cy: r ? Math.round(r.top + r.height / 2) : null, hidden: document.body.classList.contains("framer-cursor-none") }; })()`, returnByValue: true })).result.value; };
+  const lr = (await c.send("Runtime.evaluate", { expression: `(() => { const r = document.getElementById("flink").getBoundingClientRect(), p = document.getElementById("fpage").getBoundingClientRect(); return { x: Math.round(r.left + r.width / 2), y: Math.round(r.top + r.height / 2), py: Math.round(Math.max(p.top, 0) + 500) }; })()`, returnByValue: true })).result.value;
+  // (a point on the page part away from the link: the link's margin pushes the page part 300 px down)
+  const onLink = await at(lr.x, lr.y), onPage = await at(200, lr.py), offAll = await at(200, 40);
+  ok(onLink.on === "ring" && Math.abs(onLink.cx - lr.x) <= 2 && Math.abs(onLink.cy - lr.y) <= 2 && onLink.hidden && onPage.on === "dot" && Math.abs(onPage.cx - 200) <= 2 && Math.abs(onPage.cy - lr.py) <= 2 && offAll.on === "" && !offAll.hidden, `…in the copy, over the link its cursor shows centred at the pointer, over the page the other, the system pointer hidden only then — and outside them none, the usual pointer (${JSON.stringify(onLink)} / ${JSON.stringify(onPage)} / ${JSON.stringify(offAll)})`);
+  c.close(); await getJSON(`/json/close/${t.id}`).catch(() => {});
 }
 { const pc = await capture(synthUrl.replace("page.html", "pointer.html"), {}, 800).catch((e) => ({ html: "", error: String(e) }));
   const d = new JSDOM(pc.html || "<html></html>").window.document;

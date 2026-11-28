@@ -754,7 +754,7 @@ async function captureTab(tabId: number, opts: CaptureOptions, _final = true): P
 function addMotionTrigger(r: CaptureResult): void {
   // entrances waiting to scroll into view, the site's pointer effects (magnetic, tilt, cursor followers) and
   // its widgets (tabs, gallery arrows, video buttons)
-  if (!/data-sl-in-on="enter"|data-sl-(magnet|tilt|cursor|play|tabs|paddle|media|media-v|scroll-classes|hold)=/.test(r.html) || /data-sl-motion-runtime/.test(r.html)) return;
+  if (!/data-sl-in-on="enter"|data-sl-(magnet|tilt|cursor|fcur|play|tabs|paddle|media|media-v|scroll-classes|hold)=/.test(r.html) || /data-sl-motion-runtime/.test(r.html)) return;
   const tag = `<script data-sl-motion-runtime="">${motionRuntimeSource()}</script>`;
   // (a function, not a string: "$`" / "$&" in the minified script would be read as replacement patterns)
   r.html = /<\/body>/i.test(r.html) ? r.html.replace(/<\/body>(?![\s\S]*<\/body>)/i, () => `${tag}</body>`) : r.html + tag;

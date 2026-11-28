@@ -315,7 +315,7 @@ export function needsMotionRuntime(all: Record<string, string>[]): boolean {
   );
 }
 /** Pointer effects recorded from the original site, in a page (they need the runtime too). */
-export const POINTER_SELECTOR = "[data-sl-magnet], [data-sl-tilt], [data-sl-cursor], video[data-sl-play]";
+export const POINTER_SELECTOR = "[data-sl-magnet], [data-sl-tilt], [data-sl-cursor], [data-sl-fcur], video[data-sl-play]";
 /** Widgets the site's scripts ran, marked at capture (tabs, gallery arrows, video buttons): the runtime works them. */
 export const WIDGET_SELECTOR = "[data-sl-tabs], [data-sl-paddle], [data-sl-media], video[data-sl-media-v], [data-sl-scroll-classes], [data-sl-hold]";
 
@@ -461,6 +461,41 @@ export function motionRuntime(doc: Document, win: Window, split: (doc: Document,
         }
       }, { passive: true });
     }
+  }
+  // Framer's cursors (recorded at capture: [data-sl-fcur="<id>"], hidden): over a part that has one
+  // ([data-framer-cursor="<id>"], the innermost), that cursor is shown centred at the pointer, and the system pointer
+  // hidden only while it shows (Framer's own class, framer-cursor-none). Anywhere else, or with touch: the usual pointer.
+  var fcs = pointer ? ([].slice.call(doc.querySelectorAll("[data-sl-fcur]")) as HTMLElement[]) : [];
+  if (fcs.length) {
+    var fcById: { [k: string]: HTMLElement } = {};
+    for (var fi = 0; fi < fcs.length; fi++) fcById[fcs[fi].getAttribute("data-sl-fcur") || ""] = fcs[fi];
+    var fcOn: HTMLElement | null = null;
+    var fcBase: { [k: string]: { x: number; y: number } } = {};
+    var fcShow = function (el: HTMLElement | null, x: number, y: number) {
+      if (fcOn && fcOn !== el) fcOn.style.display = "none";
+      fcOn = el;
+      if (doc.body) doc.body.classList.toggle("framer-cursor-none", !!el);
+      if (!el) return;
+      var k = el.getAttribute("data-sl-fcur") || "";
+      if (el.style.display === "none") el.style.display = "";
+      el.style.pointerEvents = "none";
+      if (!fcBase[k]) {
+        // where it sits with no offset: from there to the pointer
+        el.style.translate = "0px 0px";
+        var r = el.getBoundingClientRect();
+        fcBase[k] = { x: r.left + r.width / 2, y: r.top + r.height / 2 };
+      }
+      el.style.translate = (x - fcBase[k].x).toFixed(1) + "px " + (y - fcBase[k].y).toFixed(1) + "px";
+    };
+    win.addEventListener("pointermove", function (ev: Event) {
+      var e = ev as PointerEvent;
+      var t = e.target as Element | null;
+      var part = t && t.closest ? t.closest("[data-framer-cursor]") : null;
+      fcShow(part ? fcById[part.getAttribute("data-framer-cursor") || ""] || null : null, e.clientX, e.clientY);
+    }, { passive: true });
+    doc.documentElement.addEventListener("mouseleave", function () {
+      fcShow(null, 0, 0);
+    });
   }
   // Videos the site plays ONCE as they come into view (data-sl-play="enter", from the capture): played then,
   // muted, once — by where they sit in the layout, like the entrances below. Reduced motion: their still frame.
