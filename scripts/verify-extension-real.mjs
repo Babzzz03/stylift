@@ -312,9 +312,11 @@ for (const url of urls) {
             const ls = await live.send("Page.captureScreenshot", { format: "jpeg", quality: 60 }).catch(() => null);
             if (ls?.data) writeFileSync(join(OUT, host, `live-${y}.jpg`), Buffer.from(ls.data, "base64"));
             await fetch(`http://127.0.0.1:${port}/json/activate/${stT.id}`); await sleep(800);
-            const fr = await sv(`(() => { const f = window.__studio.S.frames.get("base"); f.scrollIntoView({ block: "start" }); const st = document.querySelector("#stage") || document.scrollingElement; const r = f.getBoundingClientRect(); const k = r.height / Number(f.height); return { x: r.left, y: r.top + ${y} * k, w: r.width, h: 700 * k, k }; })()`);
+            // (the canvas is a box that scrolls: brought to that stretch of the artboard, then pictured on screen)
+            const fr = await sv(`(() => { const f = window.__studio.S.frames.get("base"); let st = f.parentElement; while (st && !(st.scrollHeight > st.clientHeight + 10 && /auto|scroll/.test(getComputedStyle(st).overflowY))) st = st.parentElement; st = st || document.scrollingElement; const r0 = f.getBoundingClientRect(); const k = r0.height / Number(f.height || r0.height); st.scrollTop += r0.top + ${y} * k - 120; const r = f.getBoundingClientRect(); return { x: r.left, y: Math.max(0, r.top + ${y} * k), w: r.width, h: Math.min(innerHeight - Math.max(0, r.top + ${y} * k), 700 * k), k }; })()`);
             if (fr && fr.w > 10) {
-              const as = await sc.send("Page.captureScreenshot", { format: "jpeg", quality: 70, clip: { x: fr.x, y: fr.y, width: fr.w, height: fr.h, scale: Math.min(4, 1440 / fr.w) }, captureBeyondViewport: true }).catch(() => null);
+              await sleep(1200);
+              const as = await sc.send("Page.captureScreenshot", { format: "jpeg", quality: 70, clip: { x: fr.x, y: fr.y, width: fr.w, height: fr.h, scale: Math.min(4, 1440 / fr.w) } }).catch(() => null);
               if (as?.data) writeFileSync(join(OUT, host, `artboard-${y}.jpg`), Buffer.from(as.data, "base64"));
             }
           }
